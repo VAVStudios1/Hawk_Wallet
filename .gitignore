@@ -1,0 +1,50 @@
+# =========================
+# Python / Django
+# =========================
+
+Backend/venv/
+Backend/__pycache__/
+Backend/**/*.pyc
+Backend/.pytest_cache/
+Backend/.coverage
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Local database
+Backend/db.sqlite3
+
+# Django generated files
+Backend/staticfiles/
+Backend/media/
+
+# =========================
+# Android / Gradle
+# =========================
+
+Frontend/**/.gradle/
+Frontend/**/build/
+Frontend/**/local.properties
+
+# Android Studio
+Frontend/**/.idea/
+Frontend/**/*.iml
+
+# Generated APK/AAB
+Frontend/**/*.apk
+Frontend/**/*.aab
+
+# =========================
+# IDE
+# =========================
+
+.vscode/
+
+# =========================
+# OS
+# =========================
+
+.DS_Store
+Thumbs.db
