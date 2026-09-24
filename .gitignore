@@ -19,6 +19,7 @@ Backend/db.sqlite3
 # Django generated files
 Backend/staticfiles/
 Backend/media/
+Backend/private_media/
 
 # =========================
 # Android / Gradle

@@ -60,6 +60,11 @@ INSTALLED_APPS = [
     'corsheaders',
     'drf_spectacular',
     'core',
+    'paymethods',
+    'orders',
+    'payins',
+    'payouts',
+    'audit',
 ]
 
 MIDDLEWARE = [
@@ -146,6 +151,12 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
+
+
+# Private uploads (payout/platform QR codes). Never mapped to a URL; files
+# are served only through authorized views. Keep outside any public root.
+
+PRIVATE_MEDIA_ROOT = Path(os.environ.get('PRIVATE_MEDIA_ROOT', BASE_DIR / 'private_media'))
 
 
 # Email
