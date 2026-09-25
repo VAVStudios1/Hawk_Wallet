@@ -1,7 +1,7 @@
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.views import APIView
 
+from core.api import ServiceAPIView, client_ip
 from core.permissions import IsVerifiedMember
 from core.utils import error_response, success_response
 from paymethods.exceptions import (
@@ -31,36 +31,12 @@ ERROR_STATUS = {
 }
 
 
-def _service_error_response(exc):
-    return error_response(
-        str(exc),
-        errors={'code': exc.code, **exc.errors},
-        status_code=ERROR_STATUS.get(type(exc), status.HTTP_400_BAD_REQUEST),
-    )
-
-
-class PayoutMethodAPIView(APIView):
+class PayoutMethodAPIView(ServiceAPIView):
     """Member-only; the acting user is always request.user."""
 
     permission_classes = [IsVerifiedMember]
-
-    def handle_exception(self, exc):
-        if isinstance(exc, PayoutMethodError):
-            return _service_error_response(exc)
-        response = super().handle_exception(exc)
-        # Keep auth/permission/throttle errors in the project's envelope.
-        detail = response.data.get('detail') if isinstance(response.data, dict) else None
-        if detail is not None:
-            response.data = {
-                'success': False,
-                'message': str(detail),
-                'errors': {'code': getattr(detail, 'code', 'error')},
-            }
-        return response
-
-
-def _client_ip(request):
-    return request.META.get('REMOTE_ADDR')
+    service_error = PayoutMethodError
+    error_status = ERROR_STATUS
 
 
 def _method_data(method):
@@ -81,7 +57,7 @@ class AddPayoutMethodView(PayoutMethodAPIView):
             upi_id=data['upi_id'],
             qr_image=data['qr_image'],
             label=data['label'],
-            ip_address=_client_ip(request),
+            ip_address=client_ip(request),
         )
         return success_response(
             'Payout method added.',
@@ -94,7 +70,7 @@ class SetDefaultPayoutMethodView(PayoutMethodAPIView):
     @extend_schema(request=None, responses={200: PayoutMethodSerializer})
     def post(self, request, method_id):
         method = set_default_payout_method(
-            user=request.user, method_id=method_id, ip_address=_client_ip(request)
+            user=request.user, method_id=method_id, ip_address=client_ip(request)
         )
         return success_response('Default payout method updated.', data=_method_data(method))
 
@@ -103,6 +79,6 @@ class DeactivatePayoutMethodView(PayoutMethodAPIView):
     @extend_schema(request=None, responses={200: PayoutMethodSerializer})
     def post(self, request, method_id):
         method = deactivate_payout_method(
-            user=request.user, method_id=method_id, ip_address=_client_ip(request)
+            user=request.user, method_id=method_id, ip_address=client_ip(request)
         )
         return success_response('Payout method deactivated.', data=_method_data(method))
