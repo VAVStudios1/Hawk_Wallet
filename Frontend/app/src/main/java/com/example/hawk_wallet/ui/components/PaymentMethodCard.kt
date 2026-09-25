@@ -1,7 +1,6 @@
 package com.example.hawk_wallet.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -37,7 +35,6 @@ import com.example.hawk_wallet.ui.model.PaymentProviderOption
 import com.example.hawk_wallet.ui.theme.HawkCoral
 import com.example.hawk_wallet.ui.theme.HawkEmerald
 import com.example.hawk_wallet.ui.theme.HawkEmeraldSoft
-import com.example.hawk_wallet.ui.theme.HawkIndigo
 import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
 
 /** One saved payout method with its Make Default / Deactivate actions. */
@@ -49,7 +46,6 @@ fun PaymentMethodCard(
     modifier: Modifier = Modifier
 ) {
     val provider = PaymentProviderOption.fromCode(method.providerCode)
-    val accent = provider?.accent ?: HawkIndigo
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -62,14 +58,7 @@ fun PaymentMethodCard(
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(accent.copy(alpha = 0.1f), RoundedCornerShape(14.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(imageVector = provider?.icon ?: Icons.Filled.Payments, contentDescription = null, tint = accent)
-            }
+            ProviderLogo(provider = provider)
             Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
