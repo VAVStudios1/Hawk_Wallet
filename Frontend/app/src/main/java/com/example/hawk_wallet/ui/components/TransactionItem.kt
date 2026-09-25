@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.hawk_wallet.ui.model.TransactionStatus
@@ -38,16 +39,18 @@ fun TransactionItem(
             .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // Money in to the member reads green, money out reads indigo.
+        val accent = if (transaction.isCredit) HawkEmerald else HawkIndigo
         Box(
             modifier = Modifier
                 .size(44.dp)
-                .background(HawkIndigo.copy(alpha = 0.08f), CircleShape),
+                .background(accent.copy(alpha = 0.1f), RoundedCornerShape(14.dp)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = transaction.type.icon,
                 contentDescription = null,
-                tint = HawkIndigo
+                tint = accent
             )
         }
         Spacer(modifier = Modifier.width(12.dp))
@@ -56,7 +59,9 @@ fun TransactionItem(
                 text = transaction.title,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
@@ -89,8 +94,8 @@ private fun TransactionItemPreview() {
                 type = TransactionType.ORDER_PAYMENT,
                 title = "Order Payment",
                 dateTime = "Today, 10:24 AM",
-                amount = "₹285.00",
-                isCredit = true,
+                amount = "₹255.00",
+                isCredit = false,
                 status = TransactionStatus.SUCCESS
             ),
             modifier = Modifier.padding(horizontal = 20.dp)

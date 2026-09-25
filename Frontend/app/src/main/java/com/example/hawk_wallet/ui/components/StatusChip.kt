@@ -25,6 +25,12 @@ fun StatusChip(status: TransactionStatus, modifier: Modifier = Modifier) {
         TransactionStatus.SUCCESS -> Triple(HawkEmeraldSoft, HawkEmerald, "Success")
         TransactionStatus.PENDING -> Triple(HawkAmberSoft, HawkAmberDark, "Pending")
         TransactionStatus.FAILED -> Triple(HawkCoralSoft, HawkCoral, "Failed")
+        TransactionStatus.REJECTED -> Triple(HawkCoralSoft, HawkCoral, "Rejected")
+        TransactionStatus.CANCELLED -> Triple(
+            MaterialTheme.colorScheme.surfaceVariant,
+            MaterialTheme.colorScheme.onSurfaceVariant,
+            "Cancelled"
+        )
     }
     Text(
         text = label,

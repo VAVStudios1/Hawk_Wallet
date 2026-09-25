@@ -2,6 +2,8 @@ package com.example.hawk_wallet.data.remote
 
 import com.example.hawk_wallet.data.local.SessionManager
 import com.example.hawk_wallet.data.remote.api.AuthApi
+import com.example.hawk_wallet.data.remote.api.HomeApi
+import com.example.hawk_wallet.data.remote.api.PayoutMethodApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
@@ -16,7 +18,26 @@ object NetworkModule {
     // one is configured; nothing here assumes AWS or any specific host.
     private const val BASE_URL = "http://10.42.16.70:8000/"
 
-    fun provideAuthApi(sessionManager: SessionManager): AuthApi {
+    // One client for the whole app: every API shares the same base URL and
+    // JWT interceptor.
+    @Volatile
+    private var retrofit: Retrofit? = null
+
+    fun provideAuthApi(sessionManager: SessionManager): AuthApi =
+        provideRetrofit(sessionManager).create(AuthApi::class.java)
+
+    fun provideHomeApi(sessionManager: SessionManager): HomeApi =
+        provideRetrofit(sessionManager).create(HomeApi::class.java)
+
+    fun providePayoutMethodApi(sessionManager: SessionManager): PayoutMethodApi =
+        provideRetrofit(sessionManager).create(PayoutMethodApi::class.java)
+
+    private fun provideRetrofit(sessionManager: SessionManager): Retrofit =
+        retrofit ?: synchronized(this) {
+            retrofit ?: buildRetrofit(sessionManager).also { retrofit = it }
+        }
+
+    private fun buildRetrofit(sessionManager: SessionManager): Retrofit {
         val authInterceptor = Interceptor { chain ->
             val token = runBlocking { sessionManager.accessTokenFlow.first() }
             val request = chain.request().newBuilder().apply {
@@ -38,12 +59,10 @@ object NetworkModule {
             .addInterceptor(loggingInterceptor)
             .build()
 
-        val retrofit = Retrofit.Builder()
+        return Retrofit.Builder()
             .baseUrl(BASE_URL)
             .client(client)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
-
-        return retrofit.create(AuthApi::class.java)
     }
 }

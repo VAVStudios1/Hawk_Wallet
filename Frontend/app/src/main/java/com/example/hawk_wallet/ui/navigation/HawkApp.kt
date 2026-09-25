@@ -13,12 +13,16 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.compose.rememberNavController
 import com.example.hawk_wallet.data.local.SessionManager
 import com.example.hawk_wallet.data.repository.AuthRepository
+import com.example.hawk_wallet.data.repository.HomeRepository
+import com.example.hawk_wallet.data.repository.PayoutMethodRepository
 import com.example.hawk_wallet.ui.screens.splash.SplashScreen
 import kotlinx.coroutines.flow.first
 
 @Composable
 fun HawkApp(
     authRepository: AuthRepository,
+    homeRepository: HomeRepository,
+    payoutMethodRepository: PayoutMethodRepository,
     sessionManager: SessionManager
 ) {
     var startDestination by remember { mutableStateOf<String?>(null) }
@@ -44,6 +48,8 @@ fun HawkApp(
             HawkNavHost(
                 navController = navController,
                 authRepository = authRepository,
+                homeRepository = homeRepository,
+                payoutMethodRepository = payoutMethodRepository,
                 sessionManager = sessionManager,
                 startDestination = destination
             )

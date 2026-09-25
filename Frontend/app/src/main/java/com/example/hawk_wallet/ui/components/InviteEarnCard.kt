@@ -1,5 +1,6 @@
 package com.example.hawk_wallet.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,7 +43,8 @@ fun InviteEarnCard(
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = HawkAmberSoft)
+        colors = CardDefaults.cardColors(containerColor = HawkAmberSoft),
+        border = BorderStroke(1.dp, HawkAmber.copy(alpha = 0.35f))
     ) {
         Row(
             modifier = Modifier.padding(18.dp),
@@ -70,7 +72,7 @@ fun InviteEarnCard(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Get rewarded when your friends join Hawk Wallet.",
+                    text = "Invite your friends and earn rewards.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
