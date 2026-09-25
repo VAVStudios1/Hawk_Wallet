@@ -13,10 +13,16 @@ from paymethods.exceptions import (
     PayoutMethodNotFound,
     PayoutMethodPermissionDenied,
 )
-from paymethods.serializers import AddPayoutMethodSerializer, PayoutMethodSerializer
+from paymethods.serializers import (
+    AddPayoutMethodSerializer,
+    PayoutMethodListItemSerializer,
+    PayoutMethodSerializer,
+)
 from paymethods.services import (
     add_payout_method,
     deactivate_payout_method,
+    list_payout_methods,
+    resolve_payout_provider_id,
     set_default_payout_method,
 )
 
@@ -43,7 +49,16 @@ def _method_data(method):
     return PayoutMethodSerializer(method).data
 
 
-class AddPayoutMethodView(PayoutMethodAPIView):
+class PayoutMethodsView(PayoutMethodAPIView):
+    @extend_schema(responses={200: PayoutMethodListItemSerializer(many=True)})
+    def get(self, request):
+        # Read-only: always request.user's own methods, never another member's.
+        methods = list_payout_methods(user=request.user)
+        return success_response(
+            'Payout methods.',
+            data={'methods': PayoutMethodListItemSerializer(methods, many=True).data},
+        )
+
     @extend_schema(request=AddPayoutMethodSerializer, responses={201: PayoutMethodSerializer})
     def post(self, request):
         serializer = AddPayoutMethodSerializer(data=request.data)
@@ -51,9 +66,13 @@ class AddPayoutMethodView(PayoutMethodAPIView):
             return error_response('Payout method details are invalid.', errors=serializer.errors)
 
         data = serializer.validated_data
+        provider_id = resolve_payout_provider_id(
+            provider_id=data.get('provider'),
+            provider_code=data.get('provider_code'),
+        )
         method = add_payout_method(
             user=request.user,
-            provider_id=data['provider'],
+            provider_id=provider_id,
             upi_id=data['upi_id'],
             qr_image=data['qr_image'],
             label=data['label'],

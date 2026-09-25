@@ -36,6 +36,46 @@ User = get_user_model()
 REPLACEMENT_ORDER = ('-created_at', '-id')
 
 
+def resolve_payout_provider_id(*, provider_id=None, provider_code=None):
+    """
+    Return the PaymentProvider id to pass to add_payout_method.
+
+    Without provider_code, provider_id is returned unchanged (the service
+    validates it as before). provider_code is matched case-insensitively
+    against the provider's UPPER_SNAKE_CASE code and must name an active
+    provider enabled for payout methods. When both are given they must name
+    the same provider; a mismatch is rejected rather than picking one.
+    """
+    if provider_code is None:
+        return provider_id
+    code = provider_code.strip().upper()
+    provider = PaymentProvider.objects.filter(
+        code=code,
+        is_active=True,
+        enabled_for_payout_methods=True,
+    ).first()
+    if provider is None:
+        raise InvalidPayoutMethod(errors={'provider': ['Choose an available payout provider.']})
+    if provider_id is not None and provider_id != provider.pk:
+        raise InvalidPayoutMethod(
+            errors={'provider_code': ['provider and provider_code refer to different providers.']}
+        )
+    return provider.pk
+
+
+def list_payout_methods(*, user):
+    """
+    Return the member's own payout methods, active and inactive: the default
+    first, then newest first (id breaks ties). Read-only.
+    """
+    _require_member(user)
+    return (
+        UserPayoutMethod.objects.filter(user=user)
+        .select_related('provider')
+        .order_by('-is_default', '-created_at', '-id')
+    )
+
+
 def add_payout_method(
     *, user, provider_id, upi_id, qr_image, label='', make_default=False, ip_address=None
 ):
