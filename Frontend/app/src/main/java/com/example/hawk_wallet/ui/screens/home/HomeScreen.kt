@@ -1,5 +1,6 @@
 package com.example.hawk_wallet.ui.screens.home
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,12 +11,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.SupportAgent
+import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -33,26 +44,50 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.hawk_wallet.ui.components.AuthErrorBanner
 import com.example.hawk_wallet.ui.components.BalanceCard
+import com.example.hawk_wallet.ui.components.DepositWithdrawalCard
 import com.example.hawk_wallet.ui.components.HawkBottomNavigation
 import com.example.hawk_wallet.ui.components.HawkNavDestination
 import com.example.hawk_wallet.ui.components.HawkTopBar
 import com.example.hawk_wallet.ui.components.InviteEarnCard
-import com.example.hawk_wallet.ui.components.QuickActionItem
-import com.example.hawk_wallet.ui.components.SummaryCard
+import com.example.hawk_wallet.ui.components.QuickActions
+import com.example.hawk_wallet.ui.components.SummaryStrip
 import com.example.hawk_wallet.ui.components.TransactionItem
 import com.example.hawk_wallet.ui.model.QuickAction
-import com.example.hawk_wallet.ui.model.SummaryStat
+import com.example.hawk_wallet.ui.model.TransactionUi
+import com.example.hawk_wallet.ui.theme.HawkIndigo
 import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
 
 private val ScreenHorizontalPadding = 20.dp
+private val SectionSpacing = 16.dp
+
+/**
+ * Entry points whose screens are not built yet. Every callback defaults to
+ * a no-op so the Home screen works today and later steps only need to pass
+ * real navigation in.
+ */
+data class HomeActions(
+    val onNotificationClick: () -> Unit = {},
+    val onBalanceDetailClick: () -> Unit = {},
+    val onQuickActionClick: (QuickAction) -> Unit = {},
+    val onSeeAllTransactionsClick: () -> Unit = {},
+    val onInviteClick: () -> Unit = {},
+    val onSupportClick: () -> Unit = {},
+    val onBottomNavSelect: (HawkNavDestination) -> Unit = {}
+)
 
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    actions: HomeActions = HomeActions()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    HomeScreenContent(uiState = uiState, onRefresh = viewModel::refresh, modifier = modifier)
+    HomeScreenContent(
+        uiState = uiState,
+        onRefresh = viewModel::refresh,
+        actions = actions,
+        modifier = modifier
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -60,15 +95,21 @@ fun HomeScreen(
 private fun HomeScreenContent(
     uiState: HomeUiState,
     onRefresh: () -> Unit,
+    actions: HomeActions,
     modifier: Modifier = Modifier
 ) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            HawkBottomNavigation(selected = HawkNavDestination.HOME, onSelect = {})
+            HawkBottomNavigation(selected = HawkNavDestination.HOME, onSelect = actions.onBottomNavSelect)
+        },
+        floatingActionButton = {
+            SupportButton(onClick = actions.onSupportClick)
         }
     ) { innerPadding ->
+        // innerPadding carries the status bar and bottom navigation insets,
+        // so no content ever sits underneath either.
         val content = uiState.content
         val screenModifier = Modifier
             .fillMaxSize()
@@ -82,10 +123,11 @@ private fun HomeScreenContent(
                 HomeDashboard(
                     content = content,
                     errorMessage = uiState.errorMessage,
-                    onRetry = onRefresh
+                    onRetry = onRefresh,
+                    actions = actions
                 )
             }
-            uiState.isLoading -> HomeLoading(screenModifier)
+            uiState.isLoading -> HomeSkeleton(screenModifier)
             else -> HomeError(
                 message = uiState.errorMessage ?: "Unable to load your dashboard.",
                 onRetry = onRefresh,
@@ -99,25 +141,29 @@ private fun HomeScreenContent(
 private fun HomeDashboard(
     content: HomeContent,
     errorMessage: String?,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    actions: HomeActions
 ) {
+    val sectionModifier = Modifier.padding(horizontal = ScreenHorizontalPadding)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 24.dp)
+        // Extra bottom space keeps the last card clear of the support button.
+        contentPadding = PaddingValues(bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(SectionSpacing)
     ) {
         item {
             HawkTopBar(
                 greetingName = content.greetingName,
                 // No notifications API exists yet, so nothing is unread.
                 hasUnreadNotifications = false,
-                onNotificationClick = {}
+                onNotificationClick = actions.onNotificationClick
             )
         }
 
         if (errorMessage != null) {
             // A refresh failed: keep the last good data and say so.
             item {
-                Column(modifier = Modifier.padding(horizontal = ScreenHorizontalPadding)) {
+                Column(modifier = sectionModifier) {
                     AuthErrorBanner(message = errorMessage)
                     TextButton(onClick = onRetry) { Text("Retry") }
                 }
@@ -128,65 +174,77 @@ private fun HomeDashboard(
             BalanceCard(
                 availableBalance = content.availableBalance,
                 pendingBalance = content.pendingBalance,
-                onAddMoneyClick = {},
-                onWithdrawClick = {},
-                modifier = Modifier.padding(horizontal = ScreenHorizontalPadding)
+                onDetailClick = actions.onBalanceDetailClick,
+                modifier = sectionModifier
             )
         }
 
         item {
-            StatRow(stats = content.summaryStats, topPadding = 20.dp)
-        }
-
-        item {
-            StatRow(
-                stats = listOf(
-                    SummaryStat(label = "Deposit", value = content.deposit),
-                    SummaryStat(label = "Withdrawal", value = content.withdrawal)
-                ),
-                topPadding = 12.dp
+            DepositWithdrawalCard(
+                deposit = content.deposit,
+                withdrawal = content.withdrawal,
+                modifier = sectionModifier
             )
         }
 
         item {
-            SectionHeader(title = "Quick Actions")
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = ScreenHorizontalPadding, vertical = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                QuickAction.entries.forEach { action ->
-                    QuickActionItem(action = action, onClick = {})
-                }
-            }
+            QuickActions(onActionClick = actions.onQuickActionClick, modifier = sectionModifier)
         }
 
         item {
-            InviteEarnCard(
-                onInviteClick = {},
-                modifier = Modifier.padding(horizontal = ScreenHorizontalPadding, vertical = 4.dp)
+            SummaryStrip(stats = content.summaryStats, modifier = sectionModifier)
+        }
+
+        item {
+            TransactionsSection(
+                transactions = content.recentTransactions,
+                onSeeAllClick = actions.onSeeAllTransactionsClick,
+                modifier = sectionModifier
             )
         }
 
         item {
-            SectionHeader(title = "Recent Transactions", onSeeAllClick = {})
+            InviteEarnCard(onInviteClick = actions.onInviteClick, modifier = sectionModifier)
         }
+    }
+}
 
-        if (content.recentTransactions.isEmpty()) {
-            item {
-                Text(
-                    text = "No transactions yet",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = ScreenHorizontalPadding, vertical = 16.dp)
-                )
-            }
-        } else {
-            items(content.recentTransactions, key = { it.id }) { transaction ->
-                Column(modifier = Modifier.padding(horizontal = ScreenHorizontalPadding)) {
-                    TransactionItem(transaction = transaction)
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+@Composable
+private fun TransactionsSection(
+    transactions: List<TransactionUi>,
+    onSeeAllClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Transactions",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onSeeAllClick) { Text("See All") }
+        }
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            if (transactions.isEmpty()) {
+                EmptyTransactions()
+            } else {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    transactions.forEachIndexed { index, transaction ->
+                        if (index > 0) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
+                        }
+                        TransactionItem(transaction = transaction)
+                    }
                 }
             }
         }
@@ -194,25 +252,87 @@ private fun HomeDashboard(
 }
 
 @Composable
-private fun StatRow(stats: List<SummaryStat>, topPadding: Dp) {
-    Row(
+private fun EmptyTransactions() {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = ScreenHorizontalPadding, end = ScreenHorizontalPadding, top = topPadding),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(horizontal = 24.dp, vertical = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        stats.forEach { stat ->
-            SummaryCard(stat = stat, modifier = Modifier.weight(1f))
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .background(HawkIndigo.copy(alpha = 0.08f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(imageVector = Icons.Outlined.ReceiptLong, contentDescription = null, tint = HawkIndigo)
         }
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = "No transactions yet",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "Your order payments and payouts will appear here.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
     }
 }
 
 @Composable
-private fun HomeLoading(modifier: Modifier = Modifier) {
-    // No figures are shown until the backend has answered.
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        CircularProgressIndicator()
+private fun SupportButton(onClick: () -> Unit) {
+    FloatingActionButton(
+        onClick = onClick,
+        shape = CircleShape,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = HawkIndigo,
+        elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 4.dp)
+    ) {
+        Icon(imageVector = Icons.Filled.SupportAgent, contentDescription = "Support")
     }
+}
+
+/** Placeholder shapes only - no figures are shown until the backend answers. */
+@Composable
+private fun HomeSkeleton(modifier: Modifier = Modifier) {
+    val block = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
+    Column(
+        modifier = modifier.padding(horizontal = ScreenHorizontalPadding, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(SectionSpacing)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(44.dp).background(block, CircleShape))
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                SkeletonBlock(width = 60.dp, height = 12.dp)
+                SkeletonBlock(width = 120.dp, height = 18.dp)
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(150.dp)
+                .background(HawkIndigo.copy(alpha = 0.12f), RoundedCornerShape(28.dp))
+        )
+        SkeletonBlock(height = 70.dp)
+        SkeletonBlock(height = 92.dp)
+        SkeletonBlock(height = 64.dp)
+        SkeletonBlock(height = 180.dp)
+    }
+}
+
+@Composable
+private fun SkeletonBlock(height: Dp, width: Dp? = null) {
+    val base = if (width != null) Modifier.width(width) else Modifier.fillMaxWidth()
+    Box(
+        modifier = base
+            .height(height)
+            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.7f), RoundedCornerShape(16.dp))
+    )
 }
 
 @Composable
@@ -240,45 +360,38 @@ private fun HomeError(message: String, onRetry: () -> Unit, modifier: Modifier =
     }
 }
 
-@Composable
-private fun SectionHeader(
-    title: String,
-    modifier: Modifier = Modifier,
-    onSeeAllClick: (() -> Unit)? = null
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(
-                start = ScreenHorizontalPadding,
-                top = 8.dp,
-                end = ScreenHorizontalPadding
-            ),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        if (onSeeAllClick != null) {
-            TextButton(onClick = onSeeAllClick) {
-                Text("See All")
-            }
-        }
-    }
-}
-
-@Preview(showBackground = true, heightDp = 900)
+@Preview(showBackground = true, heightDp = 1300)
 @Composable
 private fun HomeScreenPreview() {
     Hawk_WalletTheme {
         HomeScreenContent(
             uiState = HomeUiState(isLoading = false, content = previewHomeContent()),
-            onRefresh = {}
+            onRefresh = {},
+            actions = HomeActions()
         )
+    }
+}
+
+@Preview(showBackground = true, heightDp = 900)
+@Composable
+private fun HomeScreenEmptyPreview() {
+    Hawk_WalletTheme {
+        HomeScreenContent(
+            uiState = HomeUiState(
+                isLoading = false,
+                content = previewHomeContent().copy(recentTransactions = emptyList())
+            ),
+            onRefresh = {},
+            actions = HomeActions()
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun HomeScreenLoadingPreview() {
+    Hawk_WalletTheme {
+        HomeScreenContent(uiState = HomeUiState(), onRefresh = {}, actions = HomeActions())
     }
 }
 
@@ -288,7 +401,8 @@ private fun HomeScreenErrorPreview() {
     Hawk_WalletTheme {
         HomeScreenContent(
             uiState = HomeUiState(isLoading = false, errorMessage = "Unable to reach the server."),
-            onRefresh = {}
+            onRefresh = {},
+            actions = HomeActions()
         )
     }
 }

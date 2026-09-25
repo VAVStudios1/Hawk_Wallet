@@ -3,8 +3,9 @@ package com.example.hawk_wallet.ui.format
 import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
 import java.util.Locale
-import java.util.TimeZone
 
 /**
  * Display-only formatting for values the backend already computed. Amounts
@@ -25,21 +26,40 @@ object DisplayFormat {
     /** True unless the backend's signed amount string is negative. */
     fun isCredit(amount: String): Boolean = !amount.trim().startsWith("-")
 
-    /** ISO-8601 timestamp from the API -> "25 Sep 2026, 10:24 AM" in the device's time zone. */
-    fun dateTime(isoTimestamp: String): String {
+    /**
+     * ISO-8601 timestamp from the API -> "Today, 10:24 AM", "Yesterday, 6:48 PM"
+     * or "25 Sep 2026, 10:24 AM" in the device's time zone. Unparseable
+     * values are shown as received.
+     */
+    fun dateTime(isoTimestamp: String, now: Date = Date()): String {
         // java.time needs API 26 (minSdk is 24), so drop fractional seconds
         // and normalise "Z" before parsing with SimpleDateFormat.
         val normalised = isoTimestamp
             .replace(Regex("\\.\\d+"), "")
             .replace(Regex("Z$"), "+00:00")
-        return try {
-            val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
-            val date = parser.parse(normalised) ?: return isoTimestamp
-            SimpleDateFormat("dd MMM yyyy, h:mm a", Locale.getDefault()).apply {
-                timeZone = TimeZone.getDefault()
-            }.format(date)
+        val date = try {
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(normalised)
         } catch (e: Exception) {
-            isoTimestamp
+            null
+        } ?: return isoTimestamp
+
+        val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(date)
+        return when (daysBetween(date, now)) {
+            0 -> "Today, $time"
+            1 -> "Yesterday, $time"
+            else -> SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(date) + ", " + time
         }
+    }
+
+    /** Whole calendar days from [date] to [now] in the device's time zone. */
+    private fun daysBetween(date: Date, now: Date): Int? {
+        val dayOf = SimpleDateFormat("yyyyMMdd", Locale.US)
+        val then = dayOf.format(date)
+        if (then == dayOf.format(now)) return 0
+        val yesterday = Calendar.getInstance().apply {
+            time = now
+            add(Calendar.DAY_OF_YEAR, -1)
+        }.time
+        return if (then == dayOf.format(yesterday)) 1 else null
     }
 }
