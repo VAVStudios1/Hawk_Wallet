@@ -2,10 +2,13 @@ import hashlib
 from io import BytesIO
 from typing import NamedTuple
 
+from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from PIL import Image, ImageOps
 
 from paymethods.validators import qr_extension_validator, validate_qr_image
+
+DAMAGED_IMAGE_MESSAGE = 'This image is incomplete or damaged. Please upload your QR code again.'
 
 
 class SanitizedQR(NamedTuple):
@@ -27,13 +30,19 @@ def sanitize_qr_image(upload):
     qr_extension_validator(upload)
     validate_qr_image(upload)
 
+    # verify() above only checks JPEG headers, so a file cut short (e.g. no
+    # end-of-image marker) first fails here, when the pixels are decoded.
     upload.seek(0)
-    with Image.open(upload) as original:
-        original.load()
-        oriented = ImageOps.exif_transpose(original)
-        has_alpha = oriented.mode in ('RGBA', 'LA', 'PA') or 'transparency' in oriented.info
-        pixels = oriented.convert('RGBA' if has_alpha else 'RGB')
-    upload.seek(0)
+    try:
+        with Image.open(upload) as original:
+            original.load()
+            oriented = ImageOps.exif_transpose(original)
+            has_alpha = oriented.mode in ('RGBA', 'LA', 'PA') or 'transparency' in oriented.info
+            pixels = oriented.convert('RGBA' if has_alpha else 'RGB')
+    except (OSError, SyntaxError, ValueError, Image.DecompressionBombError):
+        raise ValidationError(DAMAGED_IMAGE_MESSAGE)
+    finally:
+        upload.seek(0)
 
     clean = Image.frombytes(pixels.mode, pixels.size, pixels.tobytes())
     buffer = BytesIO()

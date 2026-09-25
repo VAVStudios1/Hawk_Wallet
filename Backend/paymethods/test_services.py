@@ -21,6 +21,7 @@ from paymethods.exceptions import (
     PayoutMethodPermissionDenied,
 )
 from paymethods.models import PaymentProvider, UserPayoutMethod
+from paymethods.qr import DAMAGED_IMAGE_MESSAGE
 from paymethods.services import (
     add_payout_method,
     deactivate_payout_method,
@@ -174,12 +175,23 @@ def test_invalid_upi_rejected(user, add, upi_id):
         _upload(fmt='GIF', name='qr.png'),          # right extension, wrong content
         _upload(name='qr.png', size=(5000, 10)),   # too large
         _upload(fmt='PNG', name='qr.exe'),
+        # JPEG cut short (no end-of-image marker): passes verify(), fails on decode.
+        SimpleUploadedFile('qr.jpg', _upload(fmt='JPEG', name='qr.jpg', size=(120, 120)).read()[:-2]),
+        SimpleUploadedFile('qr.jpg', _upload(fmt='JPEG', name='qr.jpg', size=(120, 120)).read()[:-4]),
     ],
 )
 def test_invalid_qr_rejected(user, add, private_media_root, upload):
     with pytest.raises(InvalidPayoutMethod) as exc:
         add(user, qr_image=upload)
     assert 'qr_image' in exc.value.errors
+    assert not UserPayoutMethod.objects.exists()
+    assert _stored_files(private_media_root) == []
+
+def test_truncated_jpeg_rejected_as_damaged(user, add, private_media_root):
+    data = _upload(fmt='JPEG', name='qr.jpg', size=(120, 120)).read()
+    with pytest.raises(InvalidPayoutMethod) as exc:
+        add(user, qr_image=SimpleUploadedFile('qr.jpg', data[:-4]))
+    assert exc.value.errors == {'qr_image': [DAMAGED_IMAGE_MESSAGE]}
     assert not UserPayoutMethod.objects.exists()
     assert _stored_files(private_media_root) == []
 

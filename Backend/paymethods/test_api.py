@@ -362,3 +362,52 @@ def test_provider_code_keeps_existing_rules(user):
     assert duplicate.status_code == 409
     assert duplicate.data['errors']['code'] == 'duplicate_upi_id'
     assert _add_by_code(client, 'BHIM', 'not-a-upi').status_code == 400
+
+
+# --- QR image formats and damaged uploads ----------------------------------------
+
+def _pattern_qr(fmt, name):
+    image = Image.new('RGB', (120, 120), 'white')
+    for x in range(0, 120, 12):
+        for y in range(0, 120, 12):
+            if (x + y) % 24 == 0:
+                image.paste('black', (x, y, x + 12, y + 12))
+    buffer = BytesIO()
+    image.save(buffer, format=fmt)
+    return SimpleUploadedFile(name, buffer.getvalue())
+
+
+def _add_qr(client, upload, upi_id='lucky@ybl'):
+    return client.post(
+        URL,
+        {'provider_code': 'PHONEPE', 'upi_id': upi_id, 'label': '', 'qr_image': upload},
+        format='multipart',
+    )
+
+
+@pytest.mark.parametrize('fmt, name', [('JPEG', 'qr.jpg'), ('PNG', 'qr.png'), ('WEBP', 'qr.webp')])
+def test_valid_qr_formats_accepted(user, fmt, name, private_media_root):
+    response = _add_qr(_client(user), _pattern_qr(fmt, name))
+
+    assert response.status_code == 201, response.data
+    method = UserPayoutMethod.objects.get(pk=response.data['data']['id'])
+    # Stored re-encoded as PNG whatever the upload format.
+    assert method.qr_image.name.endswith('.png')
+    assert (private_media_root / method.qr_image.name).exists()
+
+
+@pytest.mark.parametrize('cut', [2, 4, 10])
+def test_truncated_jpeg_returns_400_not_500(user, cut, private_media_root):
+    jpeg = _pattern_qr('JPEG', 'qr.jpg').read()
+
+    response = _add_qr(_client(user), SimpleUploadedFile('qr.jpg', jpeg[:-cut]))
+
+    assert response.status_code == 400
+    assert response.data['success'] is False
+    assert response.data['errors']['code'] == 'invalid'
+    assert response.data['errors']['qr_image'] == [
+        'This image is incomplete or damaged. Please upload your QR code again.'
+    ]
+    assert not UserPayoutMethod.objects.exists()
+    stored = private_media_root / 'payout_qr'
+    assert not stored.exists() or not any(stored.iterdir())
