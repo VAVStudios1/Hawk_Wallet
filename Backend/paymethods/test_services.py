@@ -299,6 +299,43 @@ def test_set_default_requires_member(make_user, add, user):
         set_default_payout_method(user=make_user(role='ADMIN'), method_id=method.pk)
 
 
+@pytest.mark.parametrize('action', ['set_default', 'deactivate'])
+@pytest.mark.parametrize(
+    'make_actor',
+    [
+        lambda make_user, owner: AnonymousUser(),
+        lambda make_user, owner: make_user(role='ADMIN'),
+        lambda make_user, owner: make_user(role='SUPER_ADMIN'),
+        lambda make_user, owner: make_user(is_verified=False),
+        lambda make_user, owner: make_user(is_active=False),
+        # The owner themself, once no longer an active verified member.
+        lambda make_user, owner: _with_flags(owner, is_active=False),
+        lambda make_user, owner: _with_flags(owner, is_verified=False),
+    ],
+)
+def test_only_verified_active_members_may_change_methods(make_user, add, user, action, make_actor):
+    first = add(user, 'first@ybl')
+    second = add(user, 'second@ybl')
+    actor = make_actor(make_user, user)
+    call = set_default_payout_method if action == 'set_default' else deactivate_payout_method
+    target = second if action == 'set_default' else first
+
+    with pytest.raises(PayoutMethodPermissionDenied):
+        call(user=actor, method_id=target.pk)
+
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.is_active and first.is_default
+    assert second.is_active and not second.is_default
+
+
+def _with_flags(user, **flags):
+    for name, value in flags.items():
+        setattr(user, name, value)
+    user.save(update_fields=list(flags))
+    return user
+
+
 # --- deactivate_payout_method -----------------------------------------------
 
 def test_cannot_deactivate_other_users_method(make_user, add):

@@ -194,6 +194,7 @@ def test_uri_rejects_non_decimal_amount(receiving_account):
     {'is_verified': False},
     {'is_active': False},
     {'role': User.Role.ADMIN},
+    {'role': User.Role.SUPER_ADMIN},
 ])
 def test_non_member_or_unverified_user_rejected(make_user, make_order, receiving_account, extra):
     user = make_user(**extra)
@@ -442,6 +443,7 @@ def test_invalid_idempotency_key_rejected(member, order, receiving_account, key)
     {'is_verified': False},
     {'is_active': False},
     {'role': User.Role.ADMIN},
+    {'role': User.Role.SUPER_ADMIN},
 ])
 def test_submit_by_non_member_or_unverified_rejected(make_user, make_order, receiving_account, extra):
     user = make_user(**extra)
