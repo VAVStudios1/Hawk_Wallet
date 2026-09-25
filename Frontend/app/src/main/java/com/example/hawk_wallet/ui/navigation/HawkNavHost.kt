@@ -15,6 +15,7 @@ import androidx.navigation.navArgument
 import com.example.hawk_wallet.data.local.SessionManager
 import com.example.hawk_wallet.data.repository.AuthRepository
 import com.example.hawk_wallet.data.repository.HomeRepository
+import com.example.hawk_wallet.ui.components.HawkNavDestination
 import com.example.hawk_wallet.ui.screens.admin.AdminDashboardScreen
 import com.example.hawk_wallet.ui.screens.auth.login.LoginScreen
 import com.example.hawk_wallet.ui.screens.auth.login.LoginViewModel
@@ -22,8 +23,13 @@ import com.example.hawk_wallet.ui.screens.auth.otp.OtpVerificationScreen
 import com.example.hawk_wallet.ui.screens.auth.otp.OtpViewModel
 import com.example.hawk_wallet.ui.screens.auth.register.RegisterScreen
 import com.example.hawk_wallet.ui.screens.auth.register.RegisterViewModel
+import com.example.hawk_wallet.ui.screens.home.HomeActions
 import com.example.hawk_wallet.ui.screens.home.HomeScreen
 import com.example.hawk_wallet.ui.screens.home.HomeViewModel
+import com.example.hawk_wallet.ui.screens.paymethods.AddPaymentMethodScreen
+import com.example.hawk_wallet.ui.screens.paymethods.PaymentMethodDetailsScreen
+import com.example.hawk_wallet.ui.screens.paymethods.PaymentMethodsScreen
+import com.example.hawk_wallet.ui.screens.paymethods.PaymentMethodsViewModel
 import kotlinx.coroutines.launch
 
 @Composable
@@ -34,6 +40,10 @@ fun HawkNavHost(
     sessionManager: SessionManager,
     startDestination: String
 ) {
+    // Phase 2: payment methods are local state only. Created here (activity
+    // scope) so the list survives moving between Home and the Wallet screens.
+    val paymentMethodsViewModel: PaymentMethodsViewModel = viewModel()
+
     NavHost(navController = navController, startDestination = startDestination) {
         composable(HawkRoutes.LOGIN) {
             val viewModel: LoginViewModel = viewModel(
@@ -94,7 +104,44 @@ fun HawkNavHost(
             val viewModel: HomeViewModel = viewModel(
                 factory = viewModelFactory { initializer { HomeViewModel(homeRepository) } }
             )
-            HomeScreen(viewModel = viewModel)
+            HomeScreen(
+                viewModel = viewModel,
+                actions = HomeActions(
+                    onBottomNavSelect = { destination ->
+                        if (destination == HawkNavDestination.WALLET) {
+                            navController.navigate(HawkRoutes.WALLET) { launchSingleTop = true }
+                        }
+                    }
+                )
+            )
+        }
+
+        composable(HawkRoutes.WALLET) {
+            PaymentMethodsScreen(
+                viewModel = paymentMethodsViewModel,
+                onBackClick = { navController.popBackStack() },
+                onAddClick = {
+                    paymentMethodsViewModel.startNewMethod()
+                    navController.navigate(HawkRoutes.ADD_PAYMENT_METHOD)
+                }
+            )
+        }
+
+        composable(HawkRoutes.ADD_PAYMENT_METHOD) {
+            AddPaymentMethodScreen(
+                viewModel = paymentMethodsViewModel,
+                onBackClick = { navController.popBackStack() },
+                onContinue = { navController.navigate(HawkRoutes.PAYMENT_METHOD_DETAILS) }
+            )
+        }
+
+        composable(HawkRoutes.PAYMENT_METHOD_DETAILS) {
+            PaymentMethodDetailsScreen(
+                viewModel = paymentMethodsViewModel,
+                onBackClick = { navController.popBackStack() },
+                // Back to the list (skipping provider selection), which shows the success snackbar.
+                onSaved = { navController.popBackStack(HawkRoutes.WALLET, inclusive = false) }
+            )
         }
 
         composable(HawkRoutes.ADMIN_DASHBOARD) {

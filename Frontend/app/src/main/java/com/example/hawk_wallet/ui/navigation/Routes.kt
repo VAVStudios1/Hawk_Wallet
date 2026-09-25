@@ -5,6 +5,11 @@ object HawkRoutes {
     const val REGISTER = "register"
     const val HOME = "home"
     const val ADMIN_DASHBOARD = "admin_dashboard"
+
+    // Wallet tab: the member's payout (payment) methods and the add flow.
+    const val WALLET = "wallet"
+    const val ADD_PAYMENT_METHOD = "add_payment_method"
+    const val PAYMENT_METHOD_DETAILS = "payment_method_details"
     const val OTP = "otp/{mobileNumber}/{purpose}"
 
     fun otp(mobileNumber: String, purpose: String) = "otp/$mobileNumber/$purpose"
