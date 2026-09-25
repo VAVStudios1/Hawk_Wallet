@@ -4,19 +4,23 @@ Admin payout services.
 create_payout commits part (or all) of what the platform owes on an order
 as a new PENDING Payout. Committing is not paying: payout_paid_total, the
 outstanding balance and the member's money are untouched until the payout
-is marked PAID (a separate service).
+is marked PAID by mark_payout_paid.
 
 Locking order is always: the admin's User row (serializes that admin's
 retries and key checks), then the Order row - the same User-then-Order
-order as the pay-in services. The Order row lock serializes every payout on
-an order, so concurrent payouts cannot over-commit; the DB constraint
-payout_committed_total <= payout_target remains the final guard (e.g. on
-SQLite, where row locks are a no-op).
+order as the pay-in services - then, when marking paid, the Payout row.
+The Order row lock serializes every payout on an order, so concurrent
+payouts cannot over-commit or be paid twice; the DB constraints
+(payout_committed_total <= payout_target, payout_paid_total <=
+payout_committed_total, one PAID payout per UTR) remain the final guard
+(e.g. on SQLite, where row locks are a no-op).
 """
+import re
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from audit.models import LedgerEntry
 from audit.services import record_ledger_entry
@@ -27,11 +31,18 @@ from payouts.exceptions import (
     IdempotencyKeyConflict,
     InvalidIdempotencyKey,
     InvalidPayoutAmount,
+    InvalidPayoutUtr,
+    OrderNotInPayout,
     OrderNotPayable,
+    PayoutAlreadyPaid,
     PayoutConflict,
     PayoutExceedsRemaining,
+    PayoutNotFound,
+    PayoutNotPending,
     PayoutOrderNotFound,
     PayoutPermissionDenied,
+    PayoutTotalConflict,
+    PayoutUtrAlreadyUsed,
 )
 from payouts.models import Payout
 
@@ -42,6 +53,11 @@ PAYABLE_STATUSES = (Order.Status.ACTIVE, Order.Status.PAYOUT_IN_PROGRESS)
 # Payout.amount is max_digits=12, decimal_places=2: whole rupees below 10^10.
 MAX_PAYOUT_AMOUNT = Decimal('9999999999')
 RUPEES = Decimal('1.00')
+# Exactly 12 ASCII digits, matched with fullmatch: unlike the model's
+# RegexValidator ('$' allows a trailing newline), nothing else gets through.
+STRICT_UTR = re.compile(r'[0-9]{12}')
+# A pay-in UTR in one of these states is a live claim on that bank transfer.
+ACTIVE_PAYIN_STATUSES = (PayIn.Status.UNDER_REVIEW, PayIn.Status.CONFIRMED)
 
 
 def create_payout(*, admin, order_id, amount, idempotency_key):
@@ -113,6 +129,139 @@ def create_payout(*, admin, order_id, amount, idempotency_key):
         if existing is not None:
             return _replay(existing, admin, order_id, amount)
         raise PayoutConflict()
+
+
+def mark_payout_paid(*, admin, payout_id, utr, idempotency_key):
+    """
+    Mark PENDING payout `payout_id` as PAID with bank reference `utr` and
+    return it.
+
+    The order must be PAYOUT_IN_PROGRESS. utr must be exactly 12 ASCII
+    digits as given (leading zeros kept) and must not back another PAID
+    payout or an UNDER_REVIEW/CONFIRMED pay-in. Only payout_paid_total
+    changes on the order (payout_committed_total already counts this
+    payout); when it reaches payout_target exactly, the order becomes
+    COMPLETED.
+
+    Ledger: one PAYOUT_PAID entry whose balances are the order's outstanding
+    payout (payout_target - payout_paid_total) before and after, plus one
+    ORDER_COMPLETED entry, with empty balances, when the order completes.
+
+    Idempotency: Payout has no field for a mark-paid key, so idempotency_key
+    is validated but not stored, and replays are recognised from the
+    payout's own state instead. Marking an already-PAID payout with the same
+    UTR returns it unchanged; with a different UTR it raises
+    PayoutAlreadyPaid. A retry is therefore not tied to its original key or
+    admin - any active admin repeating the same UTR gets the replay.
+    """
+    if not is_active_admin(admin):
+        raise PayoutPermissionDenied('Only active admins can mark payouts paid.')
+    _validate_idempotency_key(idempotency_key)
+    _validate_utr(utr)
+
+    try:
+        with transaction.atomic():
+            _lock_user(admin)
+            order, payout = _lock_order_and_payout(payout_id)
+
+            if payout.status == Payout.Status.PAID:
+                return _replay_paid(payout, utr)
+            if payout.status != Payout.Status.PENDING:
+                raise PayoutNotPending()
+            if order.status != Order.Status.PAYOUT_IN_PROGRESS:
+                raise OrderNotInPayout()
+            if _utr_in_use(utr):
+                raise PayoutUtrAlreadyUsed()
+
+            old_paid_total = order.payout_paid_total
+            new_paid_total = old_paid_total + payout.amount
+            if (
+                new_paid_total > order.payout_committed_total
+                or order.payout_committed_total > order.payout_target
+            ):
+                raise PayoutTotalConflict()
+
+            now = timezone.now()
+            payout.status = Payout.Status.PAID
+            payout.utr = utr
+            payout.paid_by = admin
+            payout.paid_at = now
+            payout.save(update_fields=['status', 'utr', 'paid_by', 'paid_at', 'updated_at'])
+
+            completed = new_paid_total == order.payout_target
+            order.payout_paid_total = new_paid_total
+            update_fields = ['payout_paid_total', 'updated_at']
+            if completed:
+                order.status = Order.Status.COMPLETED
+                order.completed_at = now
+                update_fields += ['status', 'completed_at']
+            order.save(update_fields=update_fields)
+
+            balance_before = order.payout_target - old_paid_total
+            record_ledger_entry(
+                actor=admin,
+                action=LedgerEntry.Action.PAYOUT_PAID,
+                order=order,
+                payout=payout,
+                amount=payout.amount,
+                balance_before=balance_before,
+                balance_after=balance_before - payout.amount,
+                reference_id=order.reference,
+            )
+            if completed:
+                # Completion moves no money (the PAYOUT_PAID entry did), so
+                # like other non-balance events it carries empty balances.
+                record_ledger_entry(
+                    actor=admin,
+                    action=LedgerEntry.Action.ORDER_COMPLETED,
+                    order=order,
+                    amount=order.payout_paid_total,
+                    reference_id=order.reference,
+                )
+            return payout
+    except IntegrityError:
+        # A concurrent request paid this payout, or another PAID payout took
+        # the UTR (unique constraint); everything this attempt did rolled back.
+        payout = Payout.objects.filter(pk=_as_pk(payout_id)).first()
+        if payout is not None and payout.status == Payout.Status.PAID:
+            return _replay_paid(payout, utr)
+        if _utr_in_use(utr):
+            raise PayoutUtrAlreadyUsed()
+        raise PayoutConflict()
+
+
+def _validate_utr(utr):
+    if not isinstance(utr, str) or STRICT_UTR.fullmatch(utr) is None:
+        raise InvalidPayoutUtr()
+
+
+def _lock_order_and_payout(payout_id):
+    pk = _as_pk(payout_id)
+    # order_id is immutable, so reading it before taking any lock is safe;
+    # this keeps the Order-then-Payout lock order.
+    order_id = (
+        Payout.objects.filter(pk=pk).values_list('order_id', flat=True).first()
+        if pk else None
+    )
+    if order_id is None:
+        raise PayoutNotFound()
+    order = Order.objects.select_for_update().get(pk=order_id)
+    payout = Payout.objects.select_for_update().get(pk=pk)
+    return order, payout
+
+
+def _replay_paid(payout, utr):
+    if payout.utr != utr:
+        raise PayoutAlreadyPaid()
+    return payout
+
+
+def _utr_in_use(utr):
+    # The payout being marked is never PAID here, so it cannot match itself.
+    return (
+        Payout.objects.filter(utr=utr, status=Payout.Status.PAID).exists()
+        or PayIn.objects.filter(utr=utr, status__in=ACTIVE_PAYIN_STATUSES).exists()
+    )
 
 
 def _validate_idempotency_key(key):

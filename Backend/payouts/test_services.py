@@ -4,25 +4,35 @@ from decimal import Decimal
 import pytest
 from django.contrib.auth.models import AnonymousUser
 from django.db import connection
+from django.utils import timezone
 
 from audit.models import LedgerEntry
 from conftest import next_key
 from core.models import User
 from orders.models import Order
+from payins.models import PayIn
 from payins.services import confirm_pay_in, get_pay_in_intent, submit_pay_in_utr
 from paymethods.services import deactivate_payout_method, set_default_payout_method
 from payouts.exceptions import (
     IdempotencyKeyConflict,
     InvalidIdempotencyKey,
     InvalidPayoutAmount,
+    InvalidPayoutUtr,
+    OrderNotInPayout,
     OrderNotPayable,
+    PayoutAlreadyPaid,
     PayoutConflict,
     PayoutExceedsRemaining,
+    PayoutNotFound,
+    PayoutNotPending,
     PayoutOrderNotFound,
     PayoutPermissionDenied,
+    PayoutTotalConflict,
+    PayoutUtrAlreadyUsed,
 )
+from payouts import services
 from payouts.models import Payout
-from payouts.services import create_payout
+from payouts.services import create_payout, mark_payout_paid
 
 SNAPSHOT_FIELDS = (
     'order_amount', 'income_rate', 'income_amount', 'payout_target',
@@ -469,3 +479,496 @@ def test_concurrent_retries_with_same_key_create_one_payout(admin_user, active_o
     active_order.refresh_from_db()
     assert active_order.payout_committed_total == Decimal('100')
     assert _created_ledger().count() == 1
+
+
+# --- H. mark_payout_paid ------------------------------------------------------
+
+UTR = '123456789012'
+ORDER_FINANCIAL_FIELDS = (
+    'order_amount', 'income_rate', 'income_amount', 'payout_target',
+    'payout_method_id', 'currency', 'reference', 'payout_committed_total',
+)
+PAYOUT_FROZEN_FIELDS = (
+    'order_id', 'user_id', 'payout_method_id', 'upi_id_snapshot',
+    'provider_code_snapshot', 'provider_name_snapshot', 'amount',
+    'idempotency_key', 'created_by_id', 'created_at',
+)
+
+
+@pytest.fixture
+def pending_payout(admin_user, active_order):
+    return _pay(admin_user, active_order, Decimal('100'), key='payout-1')
+
+
+def _mark(admin, payout, utr=UTR, key=None):
+    return mark_payout_paid(
+        admin=admin, payout_id=payout.pk, utr=utr, idempotency_key=key or next_key()
+    )
+
+
+def _ledger(action, order=None):
+    entries = LedgerEntry.objects.filter(action=action)
+    return entries.filter(order=order) if order else entries
+
+
+def _paid_ledger(order=None):
+    return _ledger(LedgerEntry.Action.PAYOUT_PAID, order)
+
+
+def _completed_ledger(order=None):
+    return _ledger(LedgerEntry.Action.ORDER_COMPLETED, order)
+
+
+def _order_financials(order):
+    values = Order.objects.values().get(pk=order.pk)
+    return {field: values[field] for field in ORDER_FINANCIAL_FIELDS}
+
+
+def _payout_frozen(payout):
+    values = Payout.objects.values().get(pk=payout.pk)
+    return {field: values[field] for field in PAYOUT_FROZEN_FIELDS}
+
+
+def _assert_not_paid(payout, order, paid_total=Decimal('0'), status=Order.Status.PAYOUT_IN_PROGRESS):
+    payout = Payout.objects.get(pk=payout.pk)
+    assert payout.status != Payout.Status.PAID
+    assert payout.utr == ''
+    assert payout.paid_by is None and payout.paid_at is None
+    order = Order.objects.get(pk=order.pk)
+    assert order.payout_paid_total == paid_total
+    assert order.status == status
+    assert order.completed_at is None
+    assert not _paid_ledger().exists()
+    assert not _completed_ledger().exists()
+
+
+# H1. permissions
+
+@pytest.mark.parametrize('admin_fixture', ['admin_user', 'super_admin'])
+def test_admin_marks_payout_paid(request, active_order, pending_payout, admin_fixture):
+    admin = request.getfixturevalue(admin_fixture)
+    before = timezone.now()
+
+    payout = _mark(admin, pending_payout)
+
+    payout.refresh_from_db()
+    assert payout.pk == pending_payout.pk
+    assert payout.status == Payout.Status.PAID
+    assert payout.utr == UTR
+    assert payout.paid_by == admin
+    assert payout.paid_at is not None and payout.paid_at >= before
+
+
+@pytest.mark.parametrize('extra', [
+    {},                                                 # member
+    {'is_active': False},
+    {'role': User.Role.ADMIN, 'is_active': False},
+    {'role': User.Role.SUPER_ADMIN, 'is_active': False},
+])
+def test_non_admin_or_inactive_user_cannot_mark_paid(make_user, active_order, pending_payout, extra):
+    with pytest.raises(PayoutPermissionDenied):
+        _mark(make_user(**extra), pending_payout)
+    _assert_not_paid(pending_payout, active_order)
+
+
+def test_order_owner_cannot_mark_paid(member, active_order, pending_payout):
+    with pytest.raises(PayoutPermissionDenied):
+        _mark(member, pending_payout)
+    _assert_not_paid(pending_payout, active_order)
+
+
+def test_anonymous_cannot_mark_paid(active_order, pending_payout):
+    with pytest.raises(PayoutPermissionDenied):
+        _mark(AnonymousUser(), pending_payout)
+    _assert_not_paid(pending_payout, active_order)
+
+
+@pytest.mark.parametrize('payout_id', [999999, 'abc', None])
+def test_unknown_payout(admin_user, active_order, pending_payout, payout_id):
+    with pytest.raises(PayoutNotFound):
+        mark_payout_paid(admin=admin_user, payout_id=payout_id, utr=UTR, idempotency_key=next_key())
+    _assert_not_paid(pending_payout, active_order)
+
+
+@pytest.mark.parametrize('key', ['', '   ', None, 'x' * 65])
+def test_mark_paid_invalid_idempotency_key(admin_user, active_order, pending_payout, key):
+    with pytest.raises(InvalidIdempotencyKey):
+        mark_payout_paid(admin=admin_user, payout_id=pending_payout.pk, utr=UTR, idempotency_key=key)
+    _assert_not_paid(pending_payout, active_order)
+
+
+# H2. payout and order state
+
+def test_paid_replay_with_same_utr_returns_payout(admin_user, super_admin, active_order, pending_payout):
+    first = _mark(admin_user, pending_payout)
+    payout_before = Payout.objects.values().get(pk=first.pk)
+    order_before = Order.objects.values().get(pk=active_order.pk)
+
+    again = _mark(super_admin, pending_payout)
+
+    assert again.pk == first.pk
+    assert Payout.objects.values().get(pk=first.pk) == payout_before
+    assert Order.objects.values().get(pk=active_order.pk) == order_before
+    assert _paid_ledger().count() == 1
+
+
+def test_paid_replay_after_order_completed(admin_user, active_order):
+    payout = _pay(admin_user, active_order, active_order.payout_target)
+    _mark(admin_user, payout)
+
+    assert _mark(admin_user, payout).pk == payout.pk
+    assert _paid_ledger().count() == 1
+    assert _completed_ledger().count() == 1
+
+
+def test_paid_payout_with_different_utr_conflicts(admin_user, active_order, pending_payout):
+    _mark(admin_user, pending_payout)
+    order_before = Order.objects.values().get(pk=active_order.pk)
+
+    with pytest.raises(PayoutAlreadyPaid):
+        _mark(admin_user, pending_payout, utr='999999999999')
+
+    assert Payout.objects.get(pk=pending_payout.pk).utr == UTR
+    assert Order.objects.values().get(pk=active_order.pk) == order_before
+    assert _paid_ledger().count() == 1
+
+
+@pytest.mark.parametrize('status', [Payout.Status.FAILED, Payout.Status.CANCELLED])
+def test_non_pending_payout_rejected(admin_user, active_order, pending_payout, status):
+    Payout.objects.filter(pk=pending_payout.pk).update(status=status)
+
+    with pytest.raises(PayoutNotPending):
+        _mark(admin_user, pending_payout)
+
+    assert Payout.objects.get(pk=pending_payout.pk).status == status
+    _assert_not_paid(pending_payout, active_order)
+
+
+def test_payout_on_active_order_rejected(admin_user, active_order, pending_payout):
+    Order.objects.filter(pk=active_order.pk).update(status=Order.Status.ACTIVE)
+
+    with pytest.raises(OrderNotInPayout):
+        _mark(admin_user, pending_payout)
+    _assert_not_paid(pending_payout, active_order, status=Order.Status.ACTIVE)
+
+
+def test_payout_on_completed_order_rejected(admin_user, active_order):
+    # Inconsistent state guard: a COMPLETED order must never pay again.
+    stray = _pay(admin_user, active_order, Decimal('100'))
+    rest = _pay(admin_user, active_order, Decimal('165'))
+    _mark(admin_user, rest, utr='000000000001')
+    Order.objects.filter(pk=active_order.pk).update(
+        status=Order.Status.COMPLETED, payout_paid_total=active_order.payout_target,
+    )
+
+    with pytest.raises(OrderNotInPayout):
+        _mark(admin_user, stray)
+
+    assert Payout.objects.get(pk=stray.pk).status == Payout.Status.PENDING
+    assert _paid_ledger().count() == 1
+
+
+# H3. UTR
+
+def test_utr_leading_zeros_preserved(admin_user, pending_payout):
+    _mark(admin_user, pending_payout, utr='000012345678')
+    assert Payout.objects.get(pk=pending_payout.pk).utr == '000012345678'
+
+
+@pytest.mark.parametrize('utr', [
+    '',
+    '12345678901',                  # 11 digits
+    '1234567890123',                # 13 digits
+    '123456 789012',
+    ' 123456789012',
+    '123456789012 ',
+    '123456-789012',
+    '123456789012\n',
+    '12345678901\n',
+    '١٢٣٤٥٦٧٨٩٠١٢',                 # Arabic-Indic digits
+    '１２３４５６７８９０１２',     # full-width digits
+    'UTR123456789',
+    123456789012,
+    None,
+    b'123456789012',
+])
+def test_invalid_utr_rejected(admin_user, active_order, pending_payout, utr):
+    with pytest.raises(InvalidPayoutUtr):
+        _mark(admin_user, pending_payout, utr=utr)
+    _assert_not_paid(pending_payout, active_order)
+
+
+def test_utr_of_another_paid_payout_rejected(admin_user, active_order, pending_payout):
+    other = _pay(admin_user, active_order, Decimal('50'))
+    _mark(admin_user, other)
+
+    with pytest.raises(PayoutUtrAlreadyUsed):
+        _mark(admin_user, pending_payout)
+
+    assert Payout.objects.get(pk=pending_payout.pk).status == Payout.Status.PENDING
+    assert Order.objects.get(pk=active_order.pk).payout_paid_total == Decimal('50')
+    assert _paid_ledger().count() == 1
+
+
+def test_utr_of_confirmed_payin_rejected(admin_user, active_order, pending_payout):
+    # active_order's pay-in was confirmed with UTR 555555555555.
+    payin = PayIn.objects.get(utr='555555555555')
+    assert payin.status == PayIn.Status.CONFIRMED
+    payin_before = PayIn.objects.values().get(pk=payin.pk)
+
+    with pytest.raises(PayoutUtrAlreadyUsed):
+        _mark(admin_user, pending_payout, utr='555555555555')
+
+    assert PayIn.objects.values().get(pk=payin.pk) == payin_before
+    _assert_not_paid(pending_payout, active_order)
+
+
+def test_utr_of_under_review_payin_rejected(admin_user, member, make_order, active_order, pending_payout):
+    other = make_order(member)
+    intent = get_pay_in_intent(user=member, order_id=other.pk)
+    payin = submit_pay_in_utr(
+        user=member, order_id=other.pk, utr='777777777777',
+        idempotency_key=next_key(), intent_token=intent.intent_token,
+    )
+    assert payin.status == PayIn.Status.UNDER_REVIEW
+    payin_before = PayIn.objects.values().get(pk=payin.pk)
+
+    with pytest.raises(PayoutUtrAlreadyUsed):
+        _mark(admin_user, pending_payout, utr='777777777777')
+
+    assert PayIn.objects.values().get(pk=payin.pk) == payin_before
+    _assert_not_paid(pending_payout, active_order)
+
+
+# H4. totals and completion
+
+def test_paid_total_increases_committed_total_does_not(admin_user, active_order, pending_payout):
+    _mark(admin_user, pending_payout)
+
+    active_order.refresh_from_db()
+    assert active_order.payout_paid_total == Decimal('100')
+    assert active_order.payout_committed_total == Decimal('100')
+
+
+def test_partial_payment_leaves_order_in_progress(admin_user, active_order, pending_payout):
+    _mark(admin_user, pending_payout)
+
+    active_order.refresh_from_db()
+    assert active_order.status == Order.Status.PAYOUT_IN_PROGRESS
+    assert active_order.completed_at is None
+    assert not _completed_ledger().exists()
+
+
+def test_multiple_payouts_paid_until_completed(admin_user, super_admin, active_order):
+    first = _pay(admin_user, active_order, Decimal('100'))
+    second = _pay(admin_user, active_order, Decimal('60'))
+    third = _pay(admin_user, active_order, Decimal('105'))
+
+    _mark(admin_user, first, utr='000000000001')
+    _mark(super_admin, second, utr='000000000002')
+    active_order.refresh_from_db()
+    assert active_order.payout_paid_total == Decimal('160')
+    assert active_order.status == Order.Status.PAYOUT_IN_PROGRESS
+    assert active_order.completed_at is None
+
+    before = timezone.now()
+    _mark(admin_user, third, utr='000000000003')
+    active_order.refresh_from_db()
+    assert active_order.payout_paid_total == active_order.payout_target == Decimal('265')
+    assert active_order.payout_committed_total == Decimal('265')
+    assert active_order.status == Order.Status.COMPLETED
+    assert active_order.completed_at is not None and active_order.completed_at >= before
+    assert _paid_ledger(active_order).count() == 3
+    assert _completed_ledger(active_order).count() == 1
+
+
+def test_fully_committed_but_partly_paid_order_not_completed(admin_user, active_order):
+    first = _pay(admin_user, active_order, Decimal('200'))
+    _pay(admin_user, active_order, Decimal('65'))
+
+    _mark(admin_user, first)
+
+    active_order.refresh_from_db()
+    assert active_order.payout_committed_total == active_order.payout_target
+    assert active_order.payout_paid_total == Decimal('200')
+    assert active_order.status == Order.Status.PAYOUT_IN_PROGRESS
+
+
+def test_paid_total_cannot_exceed_committed_total(admin_user, active_order, pending_payout):
+    # Inconsistent state guard: 50 already counted as paid + 100 > 100 committed.
+    Order.objects.filter(pk=active_order.pk).update(payout_paid_total=Decimal('50'))
+
+    with pytest.raises(PayoutTotalConflict):
+        _mark(admin_user, pending_payout)
+    _assert_not_paid(pending_payout, active_order, paid_total=Decimal('50'))
+
+
+def test_paid_total_cannot_exceed_target(admin_user, active_order):
+    payout = _pay(admin_user, active_order, active_order.payout_target)
+    Order.objects.filter(pk=active_order.pk).update(payout_paid_total=Decimal('1'))
+
+    with pytest.raises(PayoutTotalConflict):
+        _mark(admin_user, payout)
+    _assert_not_paid(payout, active_order, paid_total=Decimal('1'))
+
+
+# H5. ledger
+
+def test_payout_paid_ledger_entry(admin_user, active_order, pending_payout):
+    _mark(admin_user, pending_payout)
+
+    entry = _paid_ledger().get()
+    assert entry.actor == admin_user
+    assert entry.order == active_order
+    assert entry.payout == pending_payout
+    assert entry.payin is None
+    assert entry.amount == Decimal('100')
+    # Outstanding payout owed by the platform: 265 - 0, then 265 - 100.
+    assert entry.balance_before == Decimal('265')
+    assert entry.balance_after == Decimal('165')
+    assert entry.reference_id == active_order.reference
+    assert not _completed_ledger().exists()
+    # Nothing else is written: the setup's PAYIN_CONFIRMED and PAYOUT_CREATED stay single.
+    assert _created_ledger().count() == 1
+    assert LedgerEntry.objects.filter(action=LedgerEntry.Action.PAYIN_CONFIRMED).count() == 1
+
+
+def test_final_payment_ledger_entries(admin_user, active_order, pending_payout):
+    rest = _pay(admin_user, active_order, Decimal('165'))
+    _mark(admin_user, pending_payout, utr='000000000001')
+    entries_before = LedgerEntry.objects.count()
+
+    _mark(admin_user, rest, utr='000000000002')
+
+    assert LedgerEntry.objects.count() == entries_before + 2
+    paid = _paid_ledger().get(payout=rest)
+    assert paid.amount == Decimal('165')
+    assert paid.balance_before == Decimal('165')
+    assert paid.balance_after == Decimal('0')
+
+    completed = _completed_ledger().get()
+    assert completed.actor == admin_user
+    assert completed.order == active_order
+    assert completed.payout is None and completed.payin is None
+    assert completed.amount == active_order.payout_target
+    assert completed.balance_before is None and completed.balance_after is None
+    assert completed.reference_id == active_order.reference
+
+
+def test_replay_writes_no_ledger_entries(admin_user, active_order, pending_payout):
+    _mark(admin_user, pending_payout)
+    entries_before = LedgerEntry.objects.count()
+
+    _mark(admin_user, pending_payout)
+    _mark(admin_user, pending_payout, key='another-key')
+
+    assert LedgerEntry.objects.count() == entries_before
+
+
+# H6. snapshots
+
+def test_mark_paid_keeps_payout_and_order_snapshots(admin_user, active_order, pending_payout):
+    payout_before = _payout_frozen(pending_payout)
+    order_before = _order_financials(active_order)
+
+    _mark(admin_user, pending_payout)
+
+    assert _payout_frozen(pending_payout) == payout_before
+    assert _order_financials(active_order) == order_before
+    payout = Payout.objects.get(pk=pending_payout.pk)
+    assert payout.amount == Decimal('100')
+    assert payout.idempotency_key == 'payout-1'
+    assert payout.upi_id_snapshot == 'member@ybl'
+
+
+# H7. atomicity
+
+def test_failure_after_payout_update_rolls_back_everything(monkeypatch, admin_user, active_order, pending_payout):
+    def boom(**kwargs):
+        raise RuntimeError('ledger unavailable')
+
+    monkeypatch.setattr(services, 'record_ledger_entry', boom)
+
+    with pytest.raises(RuntimeError):
+        _mark(admin_user, pending_payout)
+
+    assert Payout.objects.get(pk=pending_payout.pk).status == Payout.Status.PENDING
+    _assert_not_paid(pending_payout, active_order)
+
+
+def test_failure_on_completion_rolls_back_payment(monkeypatch, admin_user, active_order):
+    payout = _pay(admin_user, active_order, active_order.payout_target)
+    real = services.record_ledger_entry
+
+    def fail_on_completion(**kwargs):
+        if kwargs['action'] == LedgerEntry.Action.ORDER_COMPLETED:
+            raise RuntimeError('ledger unavailable')
+        return real(**kwargs)
+
+    monkeypatch.setattr(services, 'record_ledger_entry', fail_on_completion)
+
+    with pytest.raises(RuntimeError):
+        _mark(admin_user, payout)
+
+    assert Payout.objects.get(pk=payout.pk).status == Payout.Status.PENDING
+    _assert_not_paid(payout, active_order)
+
+
+# H8. concurrency (PostgreSQL only)
+
+@postgres_only
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_mark_paid_pays_once(admin_user, super_admin, active_order):
+    payout = _pay(admin_user, active_order, Decimal('100'))
+
+    results = _run_concurrently(
+        lambda: _mark(admin_user, payout),
+        lambda: _mark(super_admin, payout),
+    )
+
+    # One pays; the other waits on the order lock, then sees PAID with the
+    # same UTR and replays.
+    assert all(isinstance(r, Payout) for r in results), results
+    assert {r.pk for r in results} == {payout.pk}
+    active_order.refresh_from_db()
+    assert active_order.payout_paid_total == Decimal('100')
+    assert _paid_ledger().count() == 1
+
+
+@postgres_only
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_mark_paid_with_different_utrs_pays_once(admin_user, super_admin, active_order):
+    payout = _pay(admin_user, active_order, Decimal('100'))
+
+    results = _run_concurrently(
+        lambda: _mark(admin_user, payout, utr='000000000001'),
+        lambda: _mark(super_admin, payout, utr='000000000002'),
+    )
+
+    paid = [r for r in results if isinstance(r, Payout)]
+    errors = [r for r in results if not isinstance(r, Payout)]
+    assert len(paid) == 1
+    assert len(errors) == 1 and isinstance(errors[0], PayoutAlreadyPaid)
+    active_order.refresh_from_db()
+    assert active_order.payout_paid_total == Decimal('100')
+    assert _paid_ledger().count() == 1
+
+
+@postgres_only
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_payouts_cannot_share_utr(admin_user, super_admin, active_order):
+    first = _pay(admin_user, active_order, Decimal('100'))
+    second = _pay(admin_user, active_order, Decimal('60'))
+
+    results = _run_concurrently(
+        lambda: _mark(admin_user, first),
+        lambda: _mark(super_admin, second),
+    )
+
+    paid = [r for r in results if isinstance(r, Payout)]
+    errors = [r for r in results if not isinstance(r, Payout)]
+    assert len(paid) == 1
+    assert len(errors) == 1 and isinstance(errors[0], PayoutUtrAlreadyUsed)
+    active_order.refresh_from_db()
+    assert active_order.payout_paid_total == paid[0].amount
+    assert _paid_ledger().count() == 1
