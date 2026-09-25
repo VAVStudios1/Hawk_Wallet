@@ -30,14 +30,24 @@ def is_active_admin(user):
 
 class IsVerifiedUser(BasePermission):
     """
-    Grants access only to authenticated users who have completed OTP
-    verification. Use on endpoints that must not be reachable by an account
-    stuck mid-registration.
+    Grants access only to active, authenticated users who have completed OTP
+    verification, whatever their role. Use on endpoints that must not be
+    reachable by an account stuck mid-registration. Member-only endpoints
+    use IsVerifiedMember instead.
     """
 
     def has_permission(self, request, view):
+        user = request.user
         return bool(
-            request.user
-            and request.user.is_authenticated
-            and request.user.is_verified
+            user
+            and user.is_authenticated
+            and user.is_active
+            and user.is_verified
         )
+
+
+class IsVerifiedMember(BasePermission):
+    """API gate for member-only endpoints; same rule as is_verified_member()."""
+
+    def has_permission(self, request, view):
+        return is_verified_member(request.user)
