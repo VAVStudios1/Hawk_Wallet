@@ -40,12 +40,18 @@ def admin_user(make_user):
 
 @pytest.fixture
 def provider(db):
-    return PaymentProvider.objects.create(
+    # PHONEPE is seeded by paymethods.0002; make sure this test copy is
+    # enabled for both payout methods and pay-ins, as tests expect.
+    provider, _ = PaymentProvider.objects.update_or_create(
         code='PHONEPE',
-        display_name='PhonePe',
-        enabled_for_payout_methods=True,
-        enabled_for_pay_in=True,
+        defaults=dict(
+            display_name='PhonePe',
+            enabled_for_payout_methods=True,
+            enabled_for_pay_in=True,
+            is_active=True,
+        ),
     )
+    return provider
 
 
 @pytest.fixture

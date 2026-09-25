@@ -22,6 +22,7 @@ from paymethods.services import (
     add_payout_method,
     deactivate_payout_method,
     list_payout_methods,
+    resolve_payout_provider_id,
     set_default_payout_method,
 )
 
@@ -65,9 +66,13 @@ class PayoutMethodsView(PayoutMethodAPIView):
             return error_response('Payout method details are invalid.', errors=serializer.errors)
 
         data = serializer.validated_data
+        provider_id = resolve_payout_provider_id(
+            provider_id=data.get('provider'),
+            provider_code=data.get('provider_code'),
+        )
         method = add_payout_method(
             user=request.user,
-            provider_id=data['provider'],
+            provider_id=provider_id,
             upi_id=data['upi_id'],
             qr_image=data['qr_image'],
             label=data['label'],

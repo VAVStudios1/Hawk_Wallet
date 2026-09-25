@@ -1,13 +1,15 @@
 """Smoke tests for the payout-method endpoints; the services own the rules."""
+import importlib
 from io import BytesIO
 
 import pytest
+from django.apps import apps as django_apps
 from django.core.files.uploadedfile import SimpleUploadedFile
 from PIL import Image
 from rest_framework.test import APIClient
 
 from core.models import User
-from paymethods.models import UserPayoutMethod
+from paymethods.models import PaymentProvider, UserPayoutMethod
 from paymethods.storage import private_storage
 
 URL = '/api/payout-methods/'
@@ -229,3 +231,134 @@ def test_list_orders_default_first_then_newest(user, provider):
 
     ids = [m['id'] for m in _methods(user)]
     assert ids == [middle['id'], newest['id'], oldest['id']]
+
+
+# --- seeded providers and provider_code ----------------------------------------
+
+SEEDED = {
+    'PHONEPE': 'PhonePe',
+    'GOOGLE_PAY': 'Google Pay',
+    'BHIM': 'BHIM',
+    'MOBIKWIK': 'MobiKwik',
+}
+
+
+def _add_by_code(client, code, upi_id='lucky@ybl', **extra):
+    return client.post(
+        URL,
+        {'provider_code': code, 'upi_id': upi_id, 'qr_image': _qr(), **extra},
+        format='multipart',
+    )
+
+
+@pytest.mark.django_db
+def test_migration_seeds_payout_providers():
+    for code, name in SEEDED.items():
+        provider = PaymentProvider.objects.get(code=code)
+        assert provider.display_name == name
+        assert provider.is_active and provider.enabled_for_payout_methods
+    orders = [PaymentProvider.objects.get(code=code).sort_order for code in SEEDED]
+    assert orders == sorted(orders)
+
+
+@pytest.mark.django_db
+def test_seeding_again_keeps_existing_rows_untouched():
+    seed = importlib.import_module('paymethods.migrations.0002_seed_payment_providers')
+    PaymentProvider.objects.filter(code='BHIM').update(display_name='BHIM UPI', is_active=False)
+    before = PaymentProvider.objects.count()
+
+    seed.seed_providers(django_apps, None)
+
+    assert PaymentProvider.objects.count() == before
+    bhim = PaymentProvider.objects.get(code='BHIM')
+    assert bhim.display_name == 'BHIM UPI' and bhim.is_active is False
+
+
+@pytest.mark.parametrize('code', list(SEEDED))
+def test_add_by_provider_code(user, code):
+    response = _add_by_code(_client(user), code)
+
+    assert response.status_code == 201, response.data
+    body = response.data['data']
+    assert body['provider_code'] == code
+    assert body['provider_name'] == SEEDED[code]
+    method = UserPayoutMethod.objects.get(pk=body['id'])
+    assert method.provider.code == code and method.user == user
+
+
+def test_provider_code_is_normalised(user):
+    response = _add_by_code(_client(user), '  google_pay ')
+    assert response.status_code == 201, response.data
+    assert response.data['data']['provider_code'] == 'GOOGLE_PAY'
+
+
+def _assert_provider_rejected(response, field='provider'):
+    assert response.status_code == 400, response.data
+    assert response.data['success'] is False
+    assert response.data['errors']['code'] == 'invalid'
+    assert field in response.data['errors']
+    assert not UserPayoutMethod.objects.exists()
+
+
+def test_unknown_provider_code_rejected(user):
+    response = _add_by_code(_client(user), 'PAYPAL')
+    _assert_provider_rejected(response)
+    assert response.data['errors']['provider'] == ['Choose an available payout provider.']
+
+
+def test_inactive_provider_code_rejected(user):
+    PaymentProvider.objects.filter(code='BHIM').update(is_active=False)
+    _assert_provider_rejected(_add_by_code(_client(user), 'BHIM'))
+
+
+def test_provider_code_disabled_for_payout_methods_rejected(user):
+    PaymentProvider.objects.filter(code='MOBIKWIK').update(enabled_for_payout_methods=False)
+    _assert_provider_rejected(_add_by_code(_client(user), 'MOBIKWIK'))
+
+
+def test_provider_and_matching_code_accepted(user):
+    gpay = PaymentProvider.objects.get(code='GOOGLE_PAY')
+    response = _add_by_code(_client(user), 'GOOGLE_PAY', provider=gpay.pk)
+    assert response.status_code == 201, response.data
+    assert response.data['data']['provider'] == gpay.pk
+
+
+def test_provider_and_conflicting_code_rejected(user):
+    gpay = PaymentProvider.objects.get(code='GOOGLE_PAY')
+    response = _add_by_code(_client(user), 'BHIM', provider=gpay.pk)
+    _assert_provider_rejected(response, field='provider_code')
+    assert response.data['errors']['provider_code'] == [
+        'provider and provider_code refer to different providers.'
+    ]
+
+
+def test_provider_id_only_still_works(user, provider):
+    response = _add(_client(user), provider, 'lucky@ybl')
+    assert response.status_code == 201, response.data
+    assert response.data['data']['provider'] == provider.pk
+    assert response.data['data']['provider_code'] == 'PHONEPE'
+
+
+def test_unavailable_provider_id_still_rejected(user):
+    bhim = PaymentProvider.objects.get(code='BHIM')
+    PaymentProvider.objects.filter(pk=bhim.pk).update(is_active=False)
+    response = _client(user).post(
+        URL, {'provider': bhim.pk, 'upi_id': 'lucky@ybl', 'qr_image': _qr()}, format='multipart'
+    )
+    _assert_provider_rejected(response)
+
+
+def test_missing_provider_and_code_rejected(user):
+    response = _client(user).post(URL, {'upi_id': 'lucky@ybl', 'qr_image': _qr()}, format='multipart')
+    assert response.status_code == 400
+    assert response.data['errors']['provider'] == ['This field is required.']
+    assert not UserPayoutMethod.objects.exists()
+
+
+def test_provider_code_keeps_existing_rules(user):
+    client = _client(user)
+    assert _add_by_code(client, 'PHONEPE', 'dup@ybl').status_code == 201
+    duplicate = _add_by_code(client, 'GOOGLE_PAY', 'DUP@ybl')
+    assert duplicate.status_code == 409
+    assert duplicate.data['errors']['code'] == 'duplicate_upi_id'
+    assert _add_by_code(client, 'BHIM', 'not-a-upi').status_code == 400
