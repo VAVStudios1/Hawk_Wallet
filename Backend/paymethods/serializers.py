@@ -40,3 +40,32 @@ class PayoutMethodSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = fields
+
+
+class PayoutMethodProviderSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    code = serializers.CharField()
+    display_name = serializers.CharField()
+
+
+class PayoutMethodListItemSerializer(serializers.ModelSerializer):
+    """
+    One saved method in the member's list. Like PayoutMethodSerializer, it
+    leaves out the QR (private storage path and hash) and the owner.
+    """
+
+    provider = PayoutMethodProviderSerializer(read_only=True)
+
+    class Meta:
+        model = UserPayoutMethod
+        fields = [
+            'id',
+            'provider',
+            'label',
+            'upi_id',
+            'is_default',
+            'is_active',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = fields

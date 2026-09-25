@@ -36,6 +36,19 @@ User = get_user_model()
 REPLACEMENT_ORDER = ('-created_at', '-id')
 
 
+def list_payout_methods(*, user):
+    """
+    Return the member's own payout methods, active and inactive: the default
+    first, then newest first (id breaks ties). Read-only.
+    """
+    _require_member(user)
+    return (
+        UserPayoutMethod.objects.filter(user=user)
+        .select_related('provider')
+        .order_by('-is_default', '-created_at', '-id')
+    )
+
+
 def add_payout_method(
     *, user, provider_id, upi_id, qr_image, label='', make_default=False, ip_address=None
 ):

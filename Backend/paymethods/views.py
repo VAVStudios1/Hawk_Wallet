@@ -13,10 +13,15 @@ from paymethods.exceptions import (
     PayoutMethodNotFound,
     PayoutMethodPermissionDenied,
 )
-from paymethods.serializers import AddPayoutMethodSerializer, PayoutMethodSerializer
+from paymethods.serializers import (
+    AddPayoutMethodSerializer,
+    PayoutMethodListItemSerializer,
+    PayoutMethodSerializer,
+)
 from paymethods.services import (
     add_payout_method,
     deactivate_payout_method,
+    list_payout_methods,
     set_default_payout_method,
 )
 
@@ -43,7 +48,16 @@ def _method_data(method):
     return PayoutMethodSerializer(method).data
 
 
-class AddPayoutMethodView(PayoutMethodAPIView):
+class PayoutMethodsView(PayoutMethodAPIView):
+    @extend_schema(responses={200: PayoutMethodListItemSerializer(many=True)})
+    def get(self, request):
+        # Read-only: always request.user's own methods, never another member's.
+        methods = list_payout_methods(user=request.user)
+        return success_response(
+            'Payout methods.',
+            data={'methods': PayoutMethodListItemSerializer(methods, many=True).data},
+        )
+
     @extend_schema(request=AddPayoutMethodSerializer, responses={201: PayoutMethodSerializer})
     def post(self, request):
         serializer = AddPayoutMethodSerializer(data=request.data)
