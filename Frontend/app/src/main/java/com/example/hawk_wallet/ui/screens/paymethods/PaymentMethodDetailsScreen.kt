@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -14,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -29,6 +31,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.hawk_wallet.ui.components.AuthErrorBanner
 import com.example.hawk_wallet.ui.components.HawkBackTopBar
 import com.example.hawk_wallet.ui.components.QrUploadSection
 import com.example.hawk_wallet.ui.components.rememberQrImagePicker
@@ -51,6 +54,13 @@ fun PaymentMethodDetailsScreen(
         return
     }
 
+    LaunchedEffect(form.saved) {
+        if (form.saved) {
+            onSaved()
+            viewModel.saveHandled()
+        }
+    }
+
     val pickQr = rememberQrImagePicker(onPicked = viewModel::onQrSelected)
     PaymentMethodDetailsContent(
         provider = provider,
@@ -60,7 +70,7 @@ fun PaymentMethodDetailsScreen(
         onPickQr = pickQr,
         onRemoveQr = viewModel::removeQr,
         onQrUnreadable = viewModel::onQrUnreadable,
-        onSaveClick = { if (viewModel.save()) onSaved() }
+        onSaveClick = viewModel::save
     )
 }
 
@@ -113,15 +123,29 @@ private fun PaymentMethodDetailsContent(
                 errorText = form.qrError
             )
 
+            form.generalError?.let {
+                Spacer(modifier = Modifier.height(16.dp))
+                AuthErrorBanner(message = it)
+            }
+
             Spacer(modifier = Modifier.height(28.dp))
             Button(
                 onClick = onSaveClick,
+                enabled = !form.isSaving,
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)
             ) {
-                Text("Save Payment Method", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                if (form.isSaving) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("Save Payment Method", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                }
             }
             Spacer(modifier = Modifier.height(24.dp))
         }

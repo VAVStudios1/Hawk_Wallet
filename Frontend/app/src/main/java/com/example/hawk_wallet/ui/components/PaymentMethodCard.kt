@@ -43,7 +43,8 @@ fun PaymentMethodCard(
     method: PaymentMethodUiModel,
     onMakeDefault: () -> Unit,
     onDeactivate: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    actionsEnabled: Boolean = true
 ) {
     val provider = PaymentProviderOption.fromCode(method.providerCode)
     Card(
@@ -97,6 +98,7 @@ fun PaymentMethodCard(
                 if (!method.isDefault) {
                     OutlinedButton(
                         onClick = onMakeDefault,
+                        enabled = actionsEnabled,
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 14.dp),
                         modifier = Modifier.padding(start = 8.dp)
@@ -105,7 +107,7 @@ fun PaymentMethodCard(
                     }
                 }
                 Spacer(modifier = Modifier.weight(1f))
-                TextButton(onClick = onDeactivate) {
+                TextButton(onClick = onDeactivate, enabled = actionsEnabled) {
                     Text("Deactivate", color = HawkCoral, style = MaterialTheme.typography.labelLarge)
                 }
             }

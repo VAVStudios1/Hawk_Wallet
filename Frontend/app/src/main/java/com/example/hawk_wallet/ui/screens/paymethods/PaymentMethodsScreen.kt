@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -42,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.hawk_wallet.ui.components.AuthErrorBanner
 import com.example.hawk_wallet.ui.components.HawkBackTopBar
 import com.example.hawk_wallet.ui.components.PaymentMethodCard
 import com.example.hawk_wallet.ui.model.PaymentMethodUiModel
@@ -60,6 +62,9 @@ fun PaymentMethodsScreen(
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
+    // GET /api/payout-methods/ each time the screen opens.
+    LaunchedEffect(Unit) { viewModel.refresh() }
+
     LaunchedEffect(uiState.message) {
         uiState.message?.let {
             snackbarHostState.showSnackbar(it)
@@ -69,9 +74,13 @@ fun PaymentMethodsScreen(
 
     PaymentMethodsContent(
         methods = uiState.methods,
+        isLoading = uiState.isLoading,
+        loadError = uiState.loadError,
+        busyMethodId = uiState.busyMethodId,
         snackbarHostState = snackbarHostState,
         onBackClick = onBackClick,
         onAddClick = onAddClick,
+        onRetry = viewModel::refresh,
         onMakeDefault = viewModel::makeDefault,
         onDeactivate = viewModel::deactivate
     )
@@ -80,9 +89,13 @@ fun PaymentMethodsScreen(
 @Composable
 private fun PaymentMethodsContent(
     methods: List<PaymentMethodUiModel>,
+    isLoading: Boolean,
+    loadError: String?,
+    busyMethodId: Long?,
     snackbarHostState: SnackbarHostState,
     onBackClick: () -> Unit,
     onAddClick: () -> Unit,
+    onRetry: () -> Unit,
     onMakeDefault: (Long) -> Unit,
     onDeactivate: (Long) -> Unit
 ) {
@@ -97,32 +110,53 @@ private fun PaymentMethodsContent(
         topBar = { HawkBackTopBar(title = "My Payment Methods", onBackClick = onBackClick) },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
-        if (ordered.isEmpty()) {
-            EmptyPaymentMethods(onAddClick = onAddClick, modifier = Modifier.padding(innerPadding))
-        } else {
-            LazyColumn(
+        when {
+            ordered.isEmpty() && isLoading -> Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
-                contentPadding = PaddingValues(horizontal = ScreenHorizontalPadding, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                contentAlignment = Alignment.Center
             ) {
-                item {
-                    Text(
-                        text = "Payouts are sent to your default active method.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                items(ordered, key = { it.id }) { method ->
-                    PaymentMethodCard(
-                        method = method,
-                        onMakeDefault = { onMakeDefault(method.id) },
-                        onDeactivate = { pendingDeactivateId = method.id }
-                    )
-                }
-                item {
-                    AddMethodButton(onClick = onAddClick, modifier = Modifier.padding(top = 8.dp, bottom = 24.dp))
+                CircularProgressIndicator()
+            }
+            ordered.isEmpty() && loadError != null -> LoadError(
+                message = loadError,
+                onRetry = onRetry,
+                modifier = Modifier.padding(innerPadding)
+            )
+            ordered.isEmpty() -> EmptyPaymentMethods(onAddClick = onAddClick, modifier = Modifier.padding(innerPadding))
+            else -> {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentPadding = PaddingValues(horizontal = ScreenHorizontalPadding, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (loadError != null) {
+                        item {
+                            AuthErrorBanner(message = loadError)
+                            TextButton(onClick = onRetry) { Text("Retry") }
+                        }
+                    }
+                    item {
+                        Text(
+                            text = "Payouts are sent to your default active method.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    items(ordered, key = { it.id }) { method ->
+                        PaymentMethodCard(
+                            method = method,
+                            actionsEnabled = busyMethodId == null,
+                            onMakeDefault = { onMakeDefault(method.id) },
+                            onDeactivate = { pendingDeactivateId = method.id }
+                        )
+                    }
+                    item {
+                        AddMethodButton(onClick = onAddClick, modifier = Modifier.padding(top = 8.dp, bottom = 24.dp))
+                    }
                 }
             }
         }
@@ -187,6 +221,32 @@ private fun EmptyPaymentMethods(onAddClick: () -> Unit, modifier: Modifier = Mod
 }
 
 @Composable
+private fun LoadError(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.padding(horizontal = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Couldn't load your payment methods",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(onClick = onRetry, shape = RoundedCornerShape(16.dp)) { Text("Retry") }
+        }
+    }
+}
+
+@Composable
 private fun AddMethodButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Button(
         onClick = onClick,
@@ -211,9 +271,13 @@ private fun PaymentMethodsPreview() {
                 PaymentMethodUiModel(2, "GOOGLE_PAY", "Google Pay", "", "lucky@okaxis", null, isDefault = false, isActive = true),
                 PaymentMethodUiModel(3, "BHIM", "BHIM", "", "lucky@upi", null, isDefault = false, isActive = false)
             ),
+            isLoading = false,
+            loadError = null,
+            busyMethodId = null,
             snackbarHostState = SnackbarHostState(),
             onBackClick = {},
             onAddClick = {},
+            onRetry = {},
             onMakeDefault = {},
             onDeactivate = {}
         )
@@ -226,9 +290,13 @@ private fun PaymentMethodsEmptyPreview() {
     Hawk_WalletTheme {
         PaymentMethodsContent(
             methods = emptyList(),
+            isLoading = false,
+            loadError = null,
+            busyMethodId = null,
             snackbarHostState = SnackbarHostState(),
             onBackClick = {},
             onAddClick = {},
+            onRetry = {},
             onMakeDefault = {},
             onDeactivate = {}
         )

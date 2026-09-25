@@ -7,7 +7,9 @@ import androidx.activity.enableEdgeToEdge
 import com.example.hawk_wallet.data.local.SessionManager
 import com.example.hawk_wallet.data.remote.NetworkModule
 import com.example.hawk_wallet.data.repository.AuthRepository
+import com.example.hawk_wallet.data.repository.ContentResolverQrImageReader
 import com.example.hawk_wallet.data.repository.HomeRepository
+import com.example.hawk_wallet.data.repository.PayoutMethodRepository
 import com.example.hawk_wallet.ui.navigation.HawkApp
 import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
 
@@ -20,12 +22,17 @@ class MainActivity : ComponentActivity() {
         val authApi = NetworkModule.provideAuthApi(sessionManager)
         val authRepository = AuthRepository(authApi)
         val homeRepository = HomeRepository(NetworkModule.provideHomeApi(sessionManager))
+        val payoutMethodRepository = PayoutMethodRepository(
+            NetworkModule.providePayoutMethodApi(sessionManager),
+            ContentResolverQrImageReader(applicationContext.contentResolver)
+        )
 
         setContent {
             Hawk_WalletTheme {
                 HawkApp(
                     authRepository = authRepository,
                     homeRepository = homeRepository,
+                    payoutMethodRepository = payoutMethodRepository,
                     sessionManager = sessionManager
                 )
             }

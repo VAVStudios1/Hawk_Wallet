@@ -15,6 +15,7 @@ import androidx.navigation.navArgument
 import com.example.hawk_wallet.data.local.SessionManager
 import com.example.hawk_wallet.data.repository.AuthRepository
 import com.example.hawk_wallet.data.repository.HomeRepository
+import com.example.hawk_wallet.data.repository.PayoutMethodRepository
 import com.example.hawk_wallet.ui.components.HawkNavDestination
 import com.example.hawk_wallet.ui.screens.admin.AdminDashboardScreen
 import com.example.hawk_wallet.ui.screens.auth.login.LoginScreen
@@ -37,12 +38,15 @@ fun HawkNavHost(
     navController: NavHostController,
     authRepository: AuthRepository,
     homeRepository: HomeRepository,
+    payoutMethodRepository: PayoutMethodRepository,
     sessionManager: SessionManager,
     startDestination: String
 ) {
-    // Phase 2: payment methods are local state only. Created here (activity
-    // scope) so the list survives moving between Home and the Wallet screens.
-    val paymentMethodsViewModel: PaymentMethodsViewModel = viewModel()
+    // Shared by the Wallet screens (activity scope). It loads nothing until
+    // the Payment Methods screen opens, so it never calls the API before login.
+    val paymentMethodsViewModel: PaymentMethodsViewModel = viewModel(
+        factory = viewModelFactory { initializer { PaymentMethodsViewModel(payoutMethodRepository) } }
+    )
 
     NavHost(navController = navController, startDestination = startDestination) {
         composable(HawkRoutes.LOGIN) {

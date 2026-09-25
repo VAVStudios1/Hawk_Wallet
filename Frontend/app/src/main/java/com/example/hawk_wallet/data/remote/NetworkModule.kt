@@ -3,6 +3,7 @@ package com.example.hawk_wallet.data.remote
 import com.example.hawk_wallet.data.local.SessionManager
 import com.example.hawk_wallet.data.remote.api.AuthApi
 import com.example.hawk_wallet.data.remote.api.HomeApi
+import com.example.hawk_wallet.data.remote.api.PayoutMethodApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
@@ -27,6 +28,9 @@ object NetworkModule {
 
     fun provideHomeApi(sessionManager: SessionManager): HomeApi =
         provideRetrofit(sessionManager).create(HomeApi::class.java)
+
+    fun providePayoutMethodApi(sessionManager: SessionManager): PayoutMethodApi =
+        provideRetrofit(sessionManager).create(PayoutMethodApi::class.java)
 
     private fun provideRetrofit(sessionManager: SessionManager): Retrofit =
         retrofit ?: synchronized(this) {
