@@ -51,3 +51,25 @@ class PayInSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = fields
+
+
+class ReviewPayInSerializer(serializers.Serializer):
+    """Input for confirm_pay_in; passed through untouched to the service."""
+
+    idempotency_key = serializers.CharField(allow_blank=True, trim_whitespace=False)
+
+
+class RejectPayInSerializer(ReviewPayInSerializer):
+    """Input for reject_pay_in; the service validates the reason (1-500 chars)."""
+
+    rejection_reason = serializers.CharField(allow_blank=True, trim_whitespace=False)
+
+
+class AdminPayInSerializer(PayInSerializer):
+    """A reviewed PayIn plus the order state the review produced."""
+
+    order_status = serializers.CharField(source='order.status', read_only=True)
+
+    class Meta(PayInSerializer.Meta):
+        fields = PayInSerializer.Meta.fields + ['order_status', 'reviewed_by', 'reviewed_at']
+        read_only_fields = fields

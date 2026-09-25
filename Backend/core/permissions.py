@@ -51,3 +51,10 @@ class IsVerifiedMember(BasePermission):
 
     def has_permission(self, request, view):
         return is_verified_member(request.user)
+
+
+class IsActiveAdmin(BasePermission):
+    """API gate for admin-only endpoints; same rule as is_active_admin()."""
+
+    def has_permission(self, request, view):
+        return is_active_admin(request.user)

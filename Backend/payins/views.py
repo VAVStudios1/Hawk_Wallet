@@ -2,24 +2,35 @@ from drf_spectacular.utils import extend_schema
 from rest_framework import status
 
 from core.api import ServiceAPIView
-from core.permissions import IsVerifiedMember
+from core.permissions import IsActiveAdmin, IsVerifiedMember
 from core.utils import error_response, success_response
 from payins.exceptions import (
     IdempotencyKeyConflict,
     InvalidIdempotencyKey,
     InvalidPayInIntent,
+    InvalidRejectionReason,
     InvalidUtr,
     NoReceivingAccount,
     OrderNotPayable,
     PayerAppUnavailable,
+    PayInAlreadyReviewed,
     PayInConflict,
     PayInError,
+    PayInNotFound,
     PayInOrderNotFound,
     PayInPermissionDenied,
+    ReviewPermissionDenied,
     UtrAlreadySubmitted,
 )
-from payins.serializers import PayInIntentSerializer, PayInSerializer, SubmitPayInSerializer
-from payins.services import get_pay_in_intent, submit_pay_in_utr
+from payins.serializers import (
+    AdminPayInSerializer,
+    PayInIntentSerializer,
+    PayInSerializer,
+    RejectPayInSerializer,
+    ReviewPayInSerializer,
+    SubmitPayInSerializer,
+)
+from payins.services import confirm_pay_in, get_pay_in_intent, reject_pay_in, submit_pay_in_utr
 
 ERROR_STATUS = {
     PayInPermissionDenied: status.HTTP_403_FORBIDDEN,
@@ -34,6 +45,10 @@ ERROR_STATUS = {
     UtrAlreadySubmitted: status.HTTP_409_CONFLICT,
     PayerAppUnavailable: status.HTTP_400_BAD_REQUEST,
     PayInConflict: status.HTTP_409_CONFLICT,
+    ReviewPermissionDenied: status.HTTP_403_FORBIDDEN,
+    PayInNotFound: status.HTTP_404_NOT_FOUND,
+    PayInAlreadyReviewed: status.HTTP_409_CONFLICT,
+    InvalidRejectionReason: status.HTTP_400_BAD_REQUEST,
 }
 
 
@@ -74,3 +89,43 @@ class SubmitPayInView(MemberPayInAPIView):
             data=PayInSerializer(payin).data,
             status_code=status.HTTP_201_CREATED,
         )
+
+
+class AdminPayInAPIView(ServiceAPIView):
+    """Admin-only; the reviewer is always request.user."""
+
+    permission_classes = [IsActiveAdmin]
+    service_error = PayInError
+    error_status = ERROR_STATUS
+
+
+class ConfirmPayInView(AdminPayInAPIView):
+    @extend_schema(request=ReviewPayInSerializer, responses={200: AdminPayInSerializer})
+    def post(self, request, payin_id):
+        serializer = ReviewPayInSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response('Review details are invalid.', errors=serializer.errors)
+
+        payin = confirm_pay_in(
+            admin=request.user,
+            payin_id=payin_id,
+            idempotency_key=serializer.validated_data['idempotency_key'],
+        )
+        return success_response('Pay-in confirmed.', data=AdminPayInSerializer(payin).data)
+
+
+class RejectPayInView(AdminPayInAPIView):
+    @extend_schema(request=RejectPayInSerializer, responses={200: AdminPayInSerializer})
+    def post(self, request, payin_id):
+        serializer = RejectPayInSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response('Review details are invalid.', errors=serializer.errors)
+
+        data = serializer.validated_data
+        payin = reject_pay_in(
+            admin=request.user,
+            payin_id=payin_id,
+            rejection_reason=data['rejection_reason'],
+            idempotency_key=data['idempotency_key'],
+        )
+        return success_response('Pay-in rejected.', data=AdminPayInSerializer(payin).data)
