@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.example.hawk_wallet.data.local.SessionManager
 import com.example.hawk_wallet.data.repository.AuthRepository
+import com.example.hawk_wallet.data.repository.HomeRepository
 import com.example.hawk_wallet.ui.screens.admin.AdminDashboardScreen
 import com.example.hawk_wallet.ui.screens.auth.login.LoginScreen
 import com.example.hawk_wallet.ui.screens.auth.login.LoginViewModel
@@ -22,12 +23,14 @@ import com.example.hawk_wallet.ui.screens.auth.otp.OtpViewModel
 import com.example.hawk_wallet.ui.screens.auth.register.RegisterScreen
 import com.example.hawk_wallet.ui.screens.auth.register.RegisterViewModel
 import com.example.hawk_wallet.ui.screens.home.HomeScreen
+import com.example.hawk_wallet.ui.screens.home.HomeViewModel
 import kotlinx.coroutines.launch
 
 @Composable
 fun HawkNavHost(
     navController: NavHostController,
     authRepository: AuthRepository,
+    homeRepository: HomeRepository,
     sessionManager: SessionManager,
     startDestination: String
 ) {
@@ -88,7 +91,10 @@ fun HawkNavHost(
         }
 
         composable(HawkRoutes.HOME) {
-            HomeScreen()
+            val viewModel: HomeViewModel = viewModel(
+                factory = viewModelFactory { initializer { HomeViewModel(homeRepository) } }
+            )
+            HomeScreen(viewModel = viewModel)
         }
 
         composable(HawkRoutes.ADMIN_DASHBOARD) {
