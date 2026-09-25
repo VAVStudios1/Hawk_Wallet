@@ -6,7 +6,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.db import connection
 from django.utils import timezone
 
-from audit.models import LedgerEntry
+from audit.models import AuditEvent, LedgerEntry
 from conftest import next_key
 from core.models import User
 from orders.models import Order
@@ -32,7 +32,13 @@ from payouts.exceptions import (
 )
 from payouts import services
 from payouts.models import Payout
-from payouts.services import create_payout, mark_payout_paid
+from paymethods.models import PaymentProvider
+from payouts.services import (
+    AdminPayoutMethodView,
+    create_payout,
+    get_payout_method_for_admin,
+    mark_payout_paid,
+)
 
 SNAPSHOT_FIELDS = (
     'order_amount', 'income_rate', 'income_amount', 'payout_target',
@@ -972,3 +978,186 @@ def test_concurrent_payouts_cannot_share_utr(admin_user, super_admin, active_ord
     active_order.refresh_from_db()
     assert active_order.payout_paid_total == paid[0].amount
     assert _paid_ledger().count() == 1
+
+
+# --- I. get_payout_method_for_admin -------------------------------------------
+
+def _view(admin, payout, **kwargs):
+    return get_payout_method_for_admin(admin=admin, payout_id=payout.pk, **kwargs)
+
+
+def _view_events():
+    return AuditEvent.objects.filter(action=AuditEvent.Action.PAYOUT_METHOD_VIEWED)
+
+
+def _assert_original_destination(view, payout):
+    assert view.payout_id == payout.pk
+    assert view.upi_id == 'member@ybl'
+    assert view.provider_code == 'PHONEPE'
+    assert view.provider_name == 'PhonePe'
+    assert view.qr_image == 'payout_qr/test.png'
+
+
+# I1. permissions and lookup
+
+@pytest.mark.parametrize('viewer', ['admin_user', 'super_admin'])
+def test_admin_views_payout_method(request, member, active_order, pending_payout, viewer):
+    admin = request.getfixturevalue(viewer)
+
+    view = _view(admin, pending_payout)
+
+    assert isinstance(view, AdminPayoutMethodView)
+    _assert_original_destination(view, pending_payout)
+    assert view.order_id == active_order.pk
+    assert view.order_reference == active_order.reference
+    assert view.user_id == member.pk
+    assert view.user_name == member.name
+    assert view.amount == Decimal('100')
+    assert view.status == Payout.Status.PENDING
+    assert view.qr_sha256 == pending_payout.payout_method.qr_sha256
+
+
+def test_view_exposes_only_payout_fields(admin_user, pending_payout):
+    view = _view(admin_user, pending_payout)
+    assert set(vars(view)) == {
+        'payout_id', 'order_id', 'order_reference', 'user_id', 'user_name', 'amount',
+        'status', 'provider_code', 'provider_name', 'upi_id', 'qr_image', 'qr_sha256',
+    }
+
+
+@pytest.mark.parametrize('extra', [
+    {},                                                 # another member
+    {'is_active': False},
+    {'role': User.Role.ADMIN, 'is_active': False},
+    {'role': User.Role.SUPER_ADMIN, 'is_active': False},
+])
+def test_non_admin_or_inactive_user_cannot_view(make_user, pending_payout, extra):
+    with pytest.raises(PayoutPermissionDenied):
+        _view(make_user(**extra), pending_payout)
+    assert not _view_events().exists()
+
+
+def test_payout_owner_cannot_view_through_admin_service(member, pending_payout):
+    with pytest.raises(PayoutPermissionDenied):
+        _view(member, pending_payout)
+    assert not _view_events().exists()
+
+
+def test_anonymous_cannot_view(pending_payout):
+    with pytest.raises(PayoutPermissionDenied):
+        _view(AnonymousUser(), pending_payout)
+    assert not _view_events().exists()
+
+
+@pytest.mark.parametrize('payout_id', [999999, 'abc', None])
+def test_view_unknown_payout(admin_user, pending_payout, payout_id):
+    with pytest.raises(PayoutNotFound):
+        get_payout_method_for_admin(admin=admin_user, payout_id=payout_id)
+    assert not _view_events().exists()
+
+
+# I2. any payout status
+
+def test_view_paid_payout(admin_user, pending_payout):
+    _mark(admin_user, pending_payout)
+
+    view = _view(admin_user, pending_payout)
+
+    assert view.status == Payout.Status.PAID
+    _assert_original_destination(view, pending_payout)
+
+
+@pytest.mark.parametrize('status', [Payout.Status.FAILED, Payout.Status.CANCELLED])
+def test_view_failed_or_cancelled_payout(admin_user, pending_payout, status):
+    Payout.objects.filter(pk=pending_payout.pk).update(status=status)
+
+    view = _view(admin_user, pending_payout)
+
+    assert view.status == status
+    _assert_original_destination(view, pending_payout)
+
+
+# I3. fixed destination
+
+def test_new_method_and_default_change_do_not_change_view(admin_user, member, make_method, pending_payout):
+    newer = make_method(member, 'newer@ybl', qr_image='payout_qr/newer.png')
+    set_default_payout_method(user=member, method_id=newer.pk)
+
+    view = _view(admin_user, pending_payout)
+
+    _assert_original_destination(view, pending_payout)
+
+
+def test_deactivated_original_method_does_not_change_view(admin_user, member, make_method, pending_payout):
+    original = pending_payout.payout_method
+    newer = make_method(member, 'newer@ybl', qr_image='payout_qr/newer.png')
+    set_default_payout_method(user=member, method_id=newer.pk)
+    deactivate_payout_method(user=member, method_id=original.pk)
+
+    view = _view(admin_user, pending_payout)
+
+    _assert_original_destination(view, pending_payout)
+
+
+def test_method_with_other_provider_does_not_change_view(admin_user, member, pending_payout):
+    gpay = PaymentProvider.objects.create(
+        code='GPAY', display_name='Google Pay', enabled_for_payout_methods=True,
+    )
+    member.payout_methods.create(provider=gpay, upi_id='member@okaxis', qr_image='payout_qr/gpay.png')
+
+    view = _view(admin_user, pending_payout)
+
+    _assert_original_destination(view, pending_payout)
+
+
+def test_provider_info_comes_from_payout_snapshot(admin_user, provider, pending_payout):
+    # Catalog edits after the payout was created must not rewrite history.
+    PaymentProvider.objects.filter(pk=provider.pk).update(display_name='PhonePe Renamed')
+
+    view = _view(admin_user, pending_payout)
+
+    assert view.provider_name == 'PhonePe'
+    assert view.provider_code == 'PHONEPE'
+
+
+# I4. read-only apart from the audit event
+
+def test_view_changes_no_financial_state(admin_user, active_order, pending_payout):
+    paid = _pay(admin_user, active_order, Decimal('50'))
+    _mark(admin_user, paid)
+    payouts_before = list(Payout.objects.order_by('pk').values())
+    order_before = Order.objects.values().get(pk=active_order.pk)
+    methods_before = list(active_order.user.payout_methods.order_by('pk').values())
+    ledger_before = list(LedgerEntry.objects.order_by('pk').values())
+
+    _view(admin_user, pending_payout)
+    _view(admin_user, paid)
+
+    assert list(Payout.objects.order_by('pk').values()) == payouts_before
+    assert Order.objects.values().get(pk=active_order.pk) == order_before
+    assert list(active_order.user.payout_methods.order_by('pk').values()) == methods_before
+    assert list(LedgerEntry.objects.order_by('pk').values()) == ledger_before
+
+
+def test_view_records_one_audit_event(admin_user, active_order, pending_payout):
+    other_events = AuditEvent.objects.exclude(action=AuditEvent.Action.PAYOUT_METHOD_VIEWED).count()
+
+    _view(admin_user, pending_payout, ip_address='10.0.0.1')
+
+    event = _view_events().get()
+    assert event.actor == admin_user
+    assert event.target_type == 'paymethods.UserPayoutMethod'
+    assert event.target_id == str(pending_payout.payout_method_id)
+    assert event.ip_address == '10.0.0.1'
+    assert event.metadata == {'payout_id': pending_payout.pk, 'order_id': active_order.pk}
+    # Identifiers only: the UPI ID and QR never reach the audit log.
+    assert 'member@ybl' not in str(event.metadata)
+    assert 'payout_qr' not in str(event.metadata)
+    assert AuditEvent.objects.exclude(action=AuditEvent.Action.PAYOUT_METHOD_VIEWED).count() == other_events
+
+
+def test_each_view_is_audited(admin_user, super_admin, pending_payout):
+    _view(admin_user, pending_payout)
+    _view(super_admin, pending_payout)
+
+    assert list(_view_events().values_list('actor_id', flat=True)) == [admin_user.pk, super_admin.pk]

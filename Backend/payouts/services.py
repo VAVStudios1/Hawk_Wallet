@@ -16,14 +16,15 @@ payout_committed_total, one PAID payout per UTR) remain the final guard
 (e.g. on SQLite, where row locks are a no-op).
 """
 import re
+from dataclasses import dataclass
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from audit.models import LedgerEntry
-from audit.services import record_ledger_entry
+from audit.models import AuditEvent, LedgerEntry
+from audit.services import record_audit_event, record_ledger_entry
 from core.permissions import is_active_admin
 from orders.models import Order
 from payins.models import PayIn
@@ -228,6 +229,74 @@ def mark_payout_paid(*, admin, payout_id, utr, idempotency_key):
         if _utr_in_use(utr):
             raise PayoutUtrAlreadyUsed()
         raise PayoutConflict()
+
+
+@dataclass(frozen=True)
+class AdminPayoutMethodView:
+    """What an admin needs to send one payout, and nothing else."""
+
+    payout_id: int
+    order_id: int
+    order_reference: str
+    user_id: int
+    user_name: str
+    amount: Decimal
+    status: str
+    provider_code: str
+    provider_name: str
+    upi_id: str
+    # Stored name in private storage (no public URL); serve it only through
+    # an authorized view.
+    qr_image: str
+    qr_sha256: str
+
+
+def get_payout_method_for_admin(*, admin, payout_id, ip_address=None):
+    """
+    Return where payout `payout_id` must be sent, for an active admin.
+
+    The destination is always the payout's own: provider and UPI ID come
+    from the snapshot taken when the payout was created, and the QR from
+    the payout method fixed on it (frozen once any order or payout uses
+    it). The member's current default, newer or deactivated methods are
+    never consulted. Works for a payout in any status.
+
+    Read-only for financial state: no payout, order or ledger row changes.
+    Because it reveals a member's UPI ID and QR, each call records one
+    PAYOUT_METHOD_VIEWED AuditEvent (identifiers only in metadata).
+    """
+    if not is_active_admin(admin):
+        raise PayoutPermissionDenied('Only active admins can view payout methods.')
+    pk = _as_pk(payout_id)
+    payout = (
+        Payout.objects.select_related('order', 'user', 'payout_method').filter(pk=pk).first()
+        if pk else None
+    )
+    if payout is None:
+        raise PayoutNotFound()
+
+    method = payout.payout_method
+    record_audit_event(
+        actor=admin,
+        action=AuditEvent.Action.PAYOUT_METHOD_VIEWED,
+        target=method,
+        ip_address=ip_address,
+        metadata={'payout_id': payout.pk, 'order_id': payout.order_id},
+    )
+    return AdminPayoutMethodView(
+        payout_id=payout.pk,
+        order_id=payout.order_id,
+        order_reference=payout.order.reference,
+        user_id=payout.user_id,
+        user_name=payout.user.name,
+        amount=payout.amount,
+        status=payout.status,
+        provider_code=payout.provider_code_snapshot,
+        provider_name=payout.provider_name_snapshot,
+        upi_id=payout.upi_id_snapshot,
+        qr_image=method.qr_image.name,
+        qr_sha256=method.qr_sha256,
+    )
 
 
 def _validate_utr(utr):
