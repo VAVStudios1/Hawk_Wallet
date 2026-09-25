@@ -46,3 +46,38 @@ class PayoutExceedsRemaining(PayoutError):
 class PayoutConflict(PayoutError):
     code = 'conflict'
     default_message = 'The payout could not be created. Please try again.'
+
+
+class PayoutNotFound(PayoutError):
+    code = 'payout_not_found'
+    default_message = 'Payout not found.'
+
+
+class PayoutNotPending(PayoutError):
+    code = 'payout_not_pending'
+    default_message = 'Only a pending payout can be marked paid.'
+
+
+class PayoutAlreadyPaid(PayoutError):
+    code = 'payout_already_paid'
+    default_message = 'This payout was already marked paid with a different UTR.'
+
+
+class OrderNotInPayout(PayoutError):
+    code = 'order_not_in_payout'
+    default_message = 'Payouts can only be marked paid while the order payout is in progress.'
+
+
+class InvalidPayoutUtr(PayoutError):
+    code = 'invalid_utr'
+    default_message = 'UTR must be exactly 12 digits, with no spaces or other characters.'
+
+
+class PayoutUtrAlreadyUsed(PayoutError):
+    code = 'utr_already_used'
+    default_message = 'This UTR is already recorded against another payment.'
+
+
+class PayoutTotalConflict(PayoutError):
+    code = 'payout_total_conflict'
+    default_message = 'Marking this payout paid would exceed what was committed on the order.'
