@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from paymethods.serializers import BuyMethodSummarySerializer
 from payins.models import PayIn
 
 
@@ -28,12 +29,18 @@ class SubmitPayInSerializer(serializers.Serializer):
     utr = serializers.CharField(allow_blank=True, trim_whitespace=False)
     idempotency_key = serializers.CharField(allow_blank=True, trim_whitespace=False)
     intent_token = serializers.CharField(allow_blank=True, trim_whitespace=False)
+    # Required by the service (buy_method_required when missing); the id of
+    # one of the member's own BUY methods, never a payout method.
+    buy_method_id = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     payer_app = serializers.IntegerField(min_value=1, required=False, allow_null=True)
 
 
 class PayInSerializer(serializers.ModelSerializer):
     order_reference = serializers.CharField(source='order.reference', read_only=True)
     payee_vpa = serializers.CharField(source='payee_vpa_snapshot', read_only=True)
+    # PERSONAL / BUY: the member's account the payment came from (null on
+    # pay-ins submitted before BUY methods existed).
+    buy_method = BuyMethodSummarySerializer(read_only=True, allow_null=True)
 
     class Meta:
         model = PayIn
@@ -46,6 +53,7 @@ class PayInSerializer(serializers.ModelSerializer):
             'utr',
             'payee_vpa',
             'payer_app',
+            'buy_method',
             'rejection_reason',
             'submitted_at',
             'updated_at',

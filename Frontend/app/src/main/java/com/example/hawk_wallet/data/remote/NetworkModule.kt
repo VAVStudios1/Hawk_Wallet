@@ -1,9 +1,14 @@
 package com.example.hawk_wallet.data.remote
 
 import com.example.hawk_wallet.data.local.SessionManager
+import com.example.hawk_wallet.data.remote.api.AdminOrderApi
 import com.example.hawk_wallet.data.remote.api.AuthApi
+import com.example.hawk_wallet.data.remote.api.BuyMethodApi
 import com.example.hawk_wallet.data.remote.api.HomeApi
+import com.example.hawk_wallet.data.remote.api.OrderApi
 import com.example.hawk_wallet.data.remote.api.PayoutMethodApi
+import com.example.hawk_wallet.data.remote.api.ProfileApi
+import com.example.hawk_wallet.data.remote.api.TeamApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
@@ -16,7 +21,9 @@ object NetworkModule {
     // Local dev backend only - 10.0.2.2 is the Android emulator's alias for
     // the host machine's localhost. Point this at a real deployed URL once
     // one is configured; nothing here assumes AWS or any specific host.
-    private const val BASE_URL = "http://10.42.16.70:8000/"
+    private const val BASE_URL = "http://10.14.167.70:8000/"
+
+//    private const val BASE_URL = "https://1ee9-152-59-28-213.ngrok-free.app"
 
     // One client for the whole app: every API shares the same base URL and
     // JWT interceptor.
@@ -31,6 +38,21 @@ object NetworkModule {
 
     fun providePayoutMethodApi(sessionManager: SessionManager): PayoutMethodApi =
         provideRetrofit(sessionManager).create(PayoutMethodApi::class.java)
+
+    fun provideBuyMethodApi(sessionManager: SessionManager): BuyMethodApi =
+        provideRetrofit(sessionManager).create(BuyMethodApi::class.java)
+
+    fun provideOrderApi(sessionManager: SessionManager): OrderApi =
+        provideRetrofit(sessionManager).create(OrderApi::class.java)
+
+    fun provideAdminOrderApi(sessionManager: SessionManager): AdminOrderApi =
+        provideRetrofit(sessionManager).create(AdminOrderApi::class.java)
+
+    fun provideTeamApi(sessionManager: SessionManager): TeamApi =
+        provideRetrofit(sessionManager).create(TeamApi::class.java)
+
+    fun provideProfileApi(sessionManager: SessionManager): ProfileApi =
+        provideRetrofit(sessionManager).create(ProfileApi::class.java)
 
     private fun provideRetrofit(sessionManager: SessionManager): Retrofit =
         retrofit ?: synchronized(this) {

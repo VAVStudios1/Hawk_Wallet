@@ -5,13 +5,17 @@ from urllib.parse import parse_qsl, urlsplit
 import pytest
 from django.contrib.auth.models import AnonymousUser
 from django.core import signing
+from django.core.exceptions import ValidationError
 from django.db import connection
 from django.utils import timezone
 
+from audit.mixins import ImmutableFieldError
 from audit.models import AuditEvent, LedgerEntry
 from core.models import User
 from orders.models import Order
 from payins.exceptions import (
+    BuyMethodRequired,
+    BuyMethodUnavailable,
     IdempotencyKeyConflict,
     InvalidIdempotencyKey,
     InvalidPayInIntent,
@@ -40,7 +44,7 @@ from payins.services import (
 from paymethods.models import PaymentProvider, PlatformReceivingAccount
 from payouts.models import Payout
 
-from conftest import next_key
+from conftest import buy_method_for, next_key
 
 
 @pytest.fixture
@@ -89,7 +93,7 @@ def test_intent_for_payable_order(member, order, receiving_account):
     assert intent.payee_vpa == 'platform@ybl'
     assert intent.payee_name == 'Hawk Wallet'
     assert intent.upi_uri == (
-        f'upi://pay?pa=platform@ybl&pn=Hawk%20Wallet&tr={order.reference}'
+        f'upi://pay?pa=platform@ybl&pn=Hawk%20Wallet'
         f'&am=255.00&cu=INR&tn=Hawk%20Wallet%20order%20{order.reference}'
     )
 
@@ -126,11 +130,12 @@ def test_repeated_calls_return_same_intent(member, order, receiving_account):
     assert _intent(member, order) == _intent(member, order)
 
 
-def test_uri_carries_order_reference_as_tr_and_in_note(member, order, receiving_account):
+def test_uri_carries_order_reference_in_note_and_no_tr_for_p2p(member, order, receiving_account):
     assert order.reference.startswith('HW-')
     _, params = _query(_intent(member, order).upi_uri)
 
-    assert params['tr'] == order.reference
+    # Personal VPA (no mc): tr would make PhonePe fail the payment.
+    assert 'tr' not in params
     assert params['tn'] == f'Hawk Wallet order {order.reference}'
 
 
@@ -160,7 +165,7 @@ def test_uri_percent_encodes_payee_name(member, order, provider):
     assert params['pn'] == 'Hawk & Co / Pay=100% +1'
     assert params['am'] == '255.00'
     assert params['cu'] == 'INR'
-    assert params['tr'] == order.reference
+    assert 'tr' not in params
     assert params['tn'] == f'Hawk Wallet order {order.reference}'
 
 
@@ -169,11 +174,13 @@ def test_uri_includes_merchant_code_only_when_set(member, order, provider):
 
     _, params = _query(_intent(member, order).upi_uri)
     assert params['mc'] == '5411'
+    assert params['tr'] == order.reference
 
     account.merchant_code = ''
     account.save()
     _, params = _query(_intent(member, order).upi_uri)
     assert 'mc' not in params
+    assert 'tr' not in params
 
 
 def test_uri_formats_amount_with_two_decimals(receiving_account):
@@ -291,6 +298,9 @@ def _token_for(user, order, account=None):
 
 
 def _submit(user, order, utr=UTR, key=None, intent_token=None, **kwargs):
+    if 'buy_method_id' not in kwargs:
+        # Anonymous users are refused before the buy method is looked at.
+        kwargs['buy_method_id'] = buy_method_for(user).pk if user.pk else 1
     return submit_pay_in_utr(
         user=user,
         order_id=order.pk,
@@ -772,7 +782,7 @@ def test_intent_then_submit_end_to_end(member, order, receiving_account):
     intent = _intent(member, order)
     payin = submit_pay_in_utr(
         user=member, order_id=order.pk, utr=UTR, idempotency_key=next_key(),
-        intent_token=intent.intent_token,
+        intent_token=intent.intent_token, buy_method_id=buy_method_for(member).pk,
     )
     assert payin.receiving_account_id == intent.receiving_account_id
     assert payin.amount == intent.amount
@@ -1298,3 +1308,122 @@ def test_concurrent_confirms_by_two_admins(admin_user, super_admin, pending):
     assert sum(isinstance(r, PayIn) for r in results) == 1
     assert sum(isinstance(r, PayInAlreadyReviewed) for r in results) == 1
     assert _review_ledger(LedgerEntry.Action.PAYIN_CONFIRMED).count() == 1
+
+
+# --- BUY method on submission (PERSONAL / BUY) --------------------------------
+
+def test_submit_records_buy_method(member, order, receiving_account):
+    method = buy_method_for(member)
+
+    payin = _submit(member, order, buy_method_id=method.pk)
+
+    assert PayIn.objects.get(pk=payin.pk).buy_method == method
+    # The SELL side on the order is untouched.
+    order.refresh_from_db()
+    assert order.payout_method.upi_id == 'member.payout@ybl'
+
+
+def test_missing_buy_method_rejected(member, order, receiving_account):
+    with pytest.raises(BuyMethodRequired):
+        _submit(member, order, buy_method_id=None)
+    _assert_nothing_written(order)
+
+
+@pytest.mark.parametrize('buy_method_id', [999999, 'abc', 0])
+def test_unknown_buy_method_rejected(member, order, receiving_account, buy_method_id):
+    with pytest.raises(BuyMethodUnavailable):
+        _submit(member, order, buy_method_id=buy_method_id)
+    _assert_nothing_written(order)
+
+
+def test_inactive_buy_method_rejected(member, order, receiving_account, make_buy_method):
+    method = make_buy_method(member, 'old@okaxis', is_active=False)
+    with pytest.raises(BuyMethodUnavailable):
+        _submit(member, order, buy_method_id=method.pk)
+    _assert_nothing_written(order)
+
+
+def test_other_users_buy_method_rejected(make_user, member, order, receiving_account):
+    others = buy_method_for(make_user())
+    with pytest.raises(BuyMethodUnavailable):
+        _submit(member, order, buy_method_id=others.pk)
+    _assert_nothing_written(order)
+
+
+def test_payout_method_id_never_accepted_as_buy_method(member, order, receiving_account):
+    # SELL and BUY ids live in different tables: an id that exists only as
+    # the member's payout method is not one of their BUY methods.
+    payout_method = order.payout_method
+    assert not member.buy_methods.filter(pk=payout_method.pk).exists()
+    with pytest.raises(BuyMethodUnavailable):
+        _submit(member, order, buy_method_id=payout_method.pk)
+    _assert_nothing_written(order)
+
+
+def test_replay_with_same_buy_method_returns_original(member, order, receiving_account):
+    method = buy_method_for(member)
+    first = _submit(member, order, key='same', buy_method_id=method.pk)
+    again = _submit(member, order, key='same', buy_method_id=method.pk)
+    assert again.pk == first.pk
+    assert PayIn.objects.count() == 1
+    assert _submitted_ledger().count() == 1
+
+
+def test_replay_with_different_buy_method_conflicts(member, order, receiving_account, make_buy_method):
+    first = buy_method_for(member)
+    second = make_buy_method(member, 'second@okaxis')
+    _submit(member, order, key='same', buy_method_id=first.pk)
+
+    with pytest.raises(IdempotencyKeyConflict):
+        _submit(member, order, key='same', buy_method_id=second.pk)
+    assert PayIn.objects.get().buy_method == first
+
+
+def test_replay_after_buy_method_deactivated_returns_original(member, order, receiving_account):
+    from paymethods.buy_services import deactivate_buy_method
+
+    method = buy_method_for(member)
+    first = _submit(member, order, key='same', buy_method_id=method.pk)
+    deactivate_buy_method(user=member, method_id=method.pk)
+
+    assert _submit(member, order, key='same', buy_method_id=method.pk).pk == first.pk
+    assert PayIn.objects.get().buy_method == method
+
+
+def test_payin_buy_method_is_immutable(member, order, receiving_account, make_buy_method):
+    payin = _submit(member, order)
+    payin.buy_method = make_buy_method(member, 'swap@okaxis')
+    with pytest.raises(ImmutableFieldError):
+        payin.save()
+
+
+def test_model_rejects_buy_method_of_another_user(make_user, member, order):
+    others = buy_method_for(make_user())
+    with pytest.raises(ValidationError):
+        PayIn.objects.create(
+            order=order, payee_vpa_snapshot='platform@ybl', utr=UTR,
+            idempotency_key='k', buy_method=others,
+        )
+    assert not PayIn.objects.exists()
+
+
+@postgres_only
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_submit_and_deactivate_buy_method(member, order, receiving_account):
+    from paymethods.buy_services import deactivate_buy_method
+
+    method = buy_method_for(member)
+    results = _run_concurrently(
+        lambda: _submit(member, order, buy_method_id=method.pk),
+        lambda: deactivate_buy_method(user=member, method_id=method.pk),
+    )
+
+    # Serialized on the member's User row: either the submit saw an active
+    # method (and recorded it) or it was refused - never a PayIn naming a
+    # method that was already inactive when it was written.
+    submitted = results[0]
+    if isinstance(submitted, PayIn):
+        assert PayIn.objects.get().buy_method_id == method.pk
+    else:
+        assert isinstance(submitted, BuyMethodUnavailable), submitted
+        assert not PayIn.objects.exists()

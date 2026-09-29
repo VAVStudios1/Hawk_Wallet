@@ -5,7 +5,12 @@ import pytest
 
 from core.models import User
 from orders.models import Currency, Order, OrderOffer
-from paymethods.models import PaymentProvider, PlatformReceivingAccount, UserPayoutMethod
+from paymethods.models import (
+    PaymentProvider,
+    PlatformReceivingAccount,
+    UserBuyMethod,
+    UserPayoutMethod,
+)
 
 _mobile_numbers = count(9000000000)
 _keys = count(1)
@@ -13,6 +18,24 @@ _keys = count(1)
 
 def next_key():
     return f'key-{next(_keys)}'
+
+
+def buy_method_for(user):
+    """
+    The user's active PERSONAL / BUY method (the account a Pay-In is paid
+    from), creating a default GOOGLE_PAY one if they have none.
+    """
+    method = (
+        UserBuyMethod.objects.filter(user=user, is_active=True).order_by('-is_default', 'id').first()
+    )
+    if method is None:
+        method = UserBuyMethod.objects.create(
+            user=user,
+            provider=PaymentProvider.objects.get(code='GOOGLE_PAY'),
+            upi_id=f'buyer{user.pk}@okaxis',
+            is_default=True,
+        )
+    return method
 
 
 @pytest.fixture
@@ -40,18 +63,35 @@ def admin_user(make_user):
 
 @pytest.fixture
 def provider(db):
-    # PHONEPE is seeded by paymethods.0002; make sure this test copy is
-    # enabled for both payout methods and pay-ins, as tests expect.
+    # PHONEPE is seeded by paymethods.0002 (and made a PERSONAL / BUY
+    # provider by 0004); this test copy is re-enabled for payout methods and
+    # pay-ins, as the SELL-side tests expect, and so must be off for BUY.
     provider, _ = PaymentProvider.objects.update_or_create(
         code='PHONEPE',
         defaults=dict(
             display_name='PhonePe',
             enabled_for_payout_methods=True,
+            enabled_for_buy_methods=False,
             enabled_for_pay_in=True,
             is_active=True,
         ),
     )
     return provider
+
+
+@pytest.fixture
+def buy_provider(db):
+    # GOOGLE_PAY: a PERSONAL / BUY provider as seeded by paymethods.0004.
+    return PaymentProvider.objects.get(code='GOOGLE_PAY', enabled_for_buy_methods=True)
+
+
+@pytest.fixture
+def make_buy_method(buy_provider):
+    def _make(user, upi_id='user@okaxis', **extra):
+        return UserBuyMethod.objects.create(
+            user=user, provider=buy_provider, upi_id=upi_id, **extra
+        )
+    return _make
 
 
 @pytest.fixture

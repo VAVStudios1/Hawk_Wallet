@@ -23,6 +23,13 @@ object DisplayFormat {
         return RUPEE + format.format(value.abs())
     }
 
+    /** "4.00" -> "4%", "2.25" -> "2.25%". Trailing zeros only; the value is never rounded. */
+    fun percent(rate: String): String {
+        val value = rate.trim().toBigDecimalOrNull() ?: return "$rate%"
+        val plain = if (value.signum() == 0) "0" else value.stripTrailingZeros().toPlainString()
+        return "$plain%"
+    }
+
     /** True unless the backend's signed amount string is negative. */
     fun isCredit(amount: String): Boolean = !amount.trim().startsWith("-")
 

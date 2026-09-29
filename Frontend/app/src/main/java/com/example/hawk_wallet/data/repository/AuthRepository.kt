@@ -3,6 +3,7 @@ package com.example.hawk_wallet.data.repository
 import com.example.hawk_wallet.data.remote.api.AuthApi
 import com.example.hawk_wallet.data.remote.model.LoginData
 import com.example.hawk_wallet.data.remote.model.LoginRequest
+import com.example.hawk_wallet.data.remote.model.LogoutRequest
 import com.example.hawk_wallet.data.remote.model.RegisterData
 import com.example.hawk_wallet.data.remote.model.RegisterRequest
 import com.example.hawk_wallet.data.remote.model.ResendOtpRequest
@@ -33,6 +34,9 @@ class AuthRepository(private val authApi: AuthApi) {
 
     suspend fun resendOtp(mobileNumber: String, purpose: String): ApiResult<Unit> =
         safeApiCall { authApi.resendOtp(ResendOtpRequest(mobileNumber, purpose)) }.mapToUnit()
+
+    suspend fun logout(refreshToken: String): ApiResult<Unit> =
+        safeApiCall { authApi.logout(LogoutRequest(refreshToken)) }.mapToUnit()
 
     private fun <T> ApiResult<T>.mapToUnit(): ApiResult<Unit> = when (this) {
         is ApiResult.Success -> ApiResult.Success(Unit, message)

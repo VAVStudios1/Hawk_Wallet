@@ -3,6 +3,18 @@ from rest_framework.permissions import BasePermission
 from core.models import User
 
 
+def is_verified_user(user):
+    """
+    True for an active, OTP-verified user of any role - the rule behind
+    IsVerifiedUser, for services that must enforce it themselves.
+    """
+    return bool(
+        getattr(user, 'is_authenticated', False)
+        and user.is_active
+        and user.is_verified
+    )
+
+
 def is_verified_member(user):
     """
     True for an active, OTP-verified MEMBER - the only role that may manage
@@ -37,13 +49,7 @@ class IsVerifiedUser(BasePermission):
     """
 
     def has_permission(self, request, view):
-        user = request.user
-        return bool(
-            user
-            and user.is_authenticated
-            and user.is_active
-            and user.is_verified
-        )
+        return is_verified_user(request.user)
 
 
 class IsVerifiedMember(BasePermission):

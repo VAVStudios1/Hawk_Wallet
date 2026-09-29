@@ -7,6 +7,7 @@ import com.example.hawk_wallet.data.repository.ApiResult
 import com.example.hawk_wallet.data.repository.PayoutMethodRepository
 import com.example.hawk_wallet.ui.model.PaymentMethodUiModel
 import com.example.hawk_wallet.ui.model.PaymentProviderOption
+import com.example.hawk_wallet.ui.model.ProviderSide
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -45,7 +46,9 @@ class PaymentMethodsViewModel(private val repository: PayoutMethodRepository) : 
         _uiState.update { it.copy(form = PaymentMethodForm()) }
     }
 
+    /** Only BUSINESS providers can be new payout (SELL) methods; anything else is ignored. */
     fun selectProvider(provider: PaymentProviderOption) {
+        if (provider.side != ProviderSide.BUSINESS) return
         _uiState.update { it.copy(form = it.form.copy(provider = provider)) }
     }
 
@@ -162,7 +165,8 @@ private fun PaymentMethodForm.withSaveError(error: ApiResult.Error): PaymentMeth
     return copy(isSaving = false, upiError = upi, qrError = qr, generalError = general)
 }
 
-private fun PayoutMethodListItemDto.toUi() = PaymentMethodUiModel(
+/** Shared with the order claim flow's payout-method chooser. */
+internal fun PayoutMethodListItemDto.toUi() = PaymentMethodUiModel(
     id = id,
     providerCode = provider.code,
     providerName = provider.display_name,

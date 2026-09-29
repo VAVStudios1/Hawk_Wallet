@@ -1,4 +1,6 @@
-from drf_spectacular.utils import extend_schema
+from django.http import FileResponse
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import status
 
 from core.api import ServiceAPIView, client_ip
@@ -6,29 +8,40 @@ from core.permissions import IsActiveAdmin
 from core.utils import error_response, success_response
 from payouts.exceptions import (
     IdempotencyKeyConflict,
+    InvalidCancellationReason,
     InvalidIdempotencyKey,
     InvalidPayoutAmount,
     InvalidPayoutUtr,
     OrderNotInPayout,
     OrderNotPayable,
+    PayoutAlreadyCancelled,
     PayoutAlreadyPaid,
     PayoutConflict,
     PayoutError,
     PayoutExceedsRemaining,
+    PayoutNotCancellable,
     PayoutNotFound,
     PayoutNotPending,
     PayoutOrderNotFound,
     PayoutPermissionDenied,
+    PayoutQrNotFound,
     PayoutTotalConflict,
     PayoutUtrAlreadyUsed,
 )
 from payouts.serializers import (
     AdminPayoutMethodSerializer,
+    CancelPayoutSerializer,
     CreatePayoutSerializer,
     MarkPayoutPaidSerializer,
     PayoutSerializer,
 )
-from payouts.services import create_payout, get_payout_method_for_admin, mark_payout_paid
+from payouts.services import (
+    cancel_payout,
+    create_payout,
+    get_payout_method_for_admin,
+    get_payout_qr_for_admin,
+    mark_payout_paid,
+)
 
 ERROR_STATUS = {
     PayoutPermissionDenied: status.HTTP_403_FORBIDDEN,
@@ -46,6 +59,10 @@ ERROR_STATUS = {
     InvalidPayoutUtr: status.HTTP_400_BAD_REQUEST,
     PayoutUtrAlreadyUsed: status.HTTP_409_CONFLICT,
     PayoutTotalConflict: status.HTTP_409_CONFLICT,
+    InvalidCancellationReason: status.HTTP_400_BAD_REQUEST,
+    PayoutNotCancellable: status.HTTP_409_CONFLICT,
+    PayoutAlreadyCancelled: status.HTTP_409_CONFLICT,
+    PayoutQrNotFound: status.HTTP_404_NOT_FOUND,
 }
 
 
@@ -95,6 +112,23 @@ class MarkPayoutPaidView(AdminPayoutAPIView):
         return success_response('Payout marked paid.', data=PayoutSerializer(payout).data)
 
 
+class CancelPayoutView(AdminPayoutAPIView):
+    @extend_schema(request=CancelPayoutSerializer, responses={200: PayoutSerializer})
+    def post(self, request, payout_id):
+        serializer = CancelPayoutSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response('Cancellation details are invalid.', errors=serializer.errors)
+
+        data = serializer.validated_data
+        payout = cancel_payout(
+            admin=request.user,
+            payout_id=payout_id,
+            cancellation_reason=data['cancellation_reason'],
+            idempotency_key=data['idempotency_key'],
+        )
+        return success_response('Payout cancelled.', data=PayoutSerializer(payout).data)
+
+
 class PayoutMethodForAdminView(AdminPayoutAPIView):
     @extend_schema(responses={200: AdminPayoutMethodSerializer})
     def get(self, request, payout_id):
@@ -103,3 +137,16 @@ class PayoutMethodForAdminView(AdminPayoutAPIView):
             admin=request.user, payout_id=payout_id, ip_address=client_ip(request)
         )
         return success_response('Payout method.', data=AdminPayoutMethodSerializer(view).data)
+
+
+class PayoutQrForAdminView(AdminPayoutAPIView):
+    @extend_schema(responses={200: OpenApiResponse(OpenApiTypes.BINARY, description='QR image')})
+    def get(self, request, payout_id):
+        # The service records a PAYOUT_METHOD_QR_VIEWED audit event per call.
+        qr = get_payout_qr_for_admin(
+            admin=request.user, payout_id=payout_id, ip_address=client_ip(request)
+        )
+        response = FileResponse(qr.file, content_type=qr.content_type)
+        # A member's QR must never sit in a shared or browser cache.
+        response['Cache-Control'] = 'no-store'
+        return response

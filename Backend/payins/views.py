@@ -5,6 +5,8 @@ from core.api import ServiceAPIView
 from core.permissions import IsActiveAdmin, IsVerifiedMember
 from core.utils import error_response, success_response
 from payins.exceptions import (
+    BuyMethodRequired,
+    BuyMethodUnavailable,
     IdempotencyKeyConflict,
     InvalidIdempotencyKey,
     InvalidPayInIntent,
@@ -44,6 +46,8 @@ ERROR_STATUS = {
     IdempotencyKeyConflict: status.HTTP_409_CONFLICT,
     UtrAlreadySubmitted: status.HTTP_409_CONFLICT,
     PayerAppUnavailable: status.HTTP_400_BAD_REQUEST,
+    BuyMethodRequired: status.HTTP_400_BAD_REQUEST,
+    BuyMethodUnavailable: status.HTTP_400_BAD_REQUEST,
     PayInConflict: status.HTTP_409_CONFLICT,
     ReviewPermissionDenied: status.HTTP_403_FORBIDDEN,
     PayInNotFound: status.HTTP_404_NOT_FOUND,
@@ -82,6 +86,7 @@ class SubmitPayInView(MemberPayInAPIView):
             utr=data['utr'],
             idempotency_key=data['idempotency_key'],
             intent_token=data['intent_token'],
+            buy_method_id=data.get('buy_method_id'),
             payer_app=data.get('payer_app'),
         )
         return success_response(

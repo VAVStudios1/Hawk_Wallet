@@ -14,7 +14,8 @@ class Payout(ImmutableFieldsMixin, UndeletableModel):
 
     Payouts always go to the payout method fixed on the order. The
     destination is snapshotted on creation, so the record keeps showing
-    where money actually went. A PAID payout requires a UTR and is frozen.
+    where money actually went. A PAID payout requires a UTR and is frozen;
+    a CANCELLED payout (a PENDING one created by mistake) is frozen too.
     """
 
     class Status(models.TextChoices):
@@ -23,7 +24,7 @@ class Payout(ImmutableFieldsMixin, UndeletableModel):
         FAILED = 'FAILED', 'Failed'
         CANCELLED = 'CANCELLED', 'Cancelled'
 
-    final_statuses = (Status.PAID,)
+    final_statuses = (Status.PAID, Status.CANCELLED)
 
     immutable_fields = (
         'order',
@@ -79,6 +80,7 @@ class Payout(ImmutableFieldsMixin, UndeletableModel):
 
     failure_reason = models.TextField(blank=True)
     idempotency_key = models.CharField(max_length=64, unique=True)
+    # Holds the admin's cancellation reason once the payout is CANCELLED.
     note = models.TextField(blank=True)
 
     class Meta:

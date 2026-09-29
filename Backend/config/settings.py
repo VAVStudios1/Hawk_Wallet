@@ -57,6 +57,9 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
+    # Tracks every issued refresh token (OutstandingToken) so logout,
+    # rotation and password change can revoke them server-side.
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'drf_spectacular',
     'core',
@@ -65,6 +68,8 @@ INSTALLED_APPS = [
     'payins',
     'payouts',
     'audit',
+    'team',
+    'accounts',
 ]
 
 MIDDLEWARE = [
@@ -159,6 +164,12 @@ STATIC_URL = 'static/'
 PRIVATE_MEDIA_ROOT = Path(os.environ.get('PRIVATE_MEDIA_ROOT', BASE_DIR / 'private_media'))
 
 
+# Team / referral invite links: <REFERRAL_LINK_BASE_URL>?ref=<code>, e.g.
+# https://<app-domain>/register. Empty = the API returns no link yet.
+
+REFERRAL_LINK_BASE_URL = os.environ.get('REFERRAL_LINK_BASE_URL', '').strip()
+
+
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
@@ -187,6 +198,7 @@ REST_FRAMEWORK = {
         'anon': '60/min',
         'user': '120/min',
         'otp': '10/min',
+        'password_change': '5/min',
     },
 }
 
@@ -203,7 +215,9 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': False,
+    # A refresh token is single-use: once rotated it is blacklisted, so a
+    # stolen copy stops working as soon as the real client refreshes.
+    'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
     'USER_ID_FIELD': 'id',
     'USER_ID_CLAIM': 'user_id',

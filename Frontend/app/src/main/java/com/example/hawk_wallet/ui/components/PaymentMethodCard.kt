@@ -37,14 +37,19 @@ import com.example.hawk_wallet.ui.theme.HawkEmerald
 import com.example.hawk_wallet.ui.theme.HawkEmeraldSoft
 import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
 
-/** One saved payout method with its Make Default / Deactivate actions. */
+/**
+ * One saved payout method with its Make Default / Deactivate actions.
+ * [caption] is an optional quiet line under the UPI ID (e.g. marking an
+ * existing SELL account whose provider is no longer offered for new ones).
+ */
 @Composable
 fun PaymentMethodCard(
     method: PaymentMethodUiModel,
     onMakeDefault: () -> Unit,
     onDeactivate: () -> Unit,
     modifier: Modifier = Modifier,
-    actionsEnabled: Boolean = true
+    actionsEnabled: Boolean = true,
+    caption: String? = null
 ) {
     val provider = PaymentProviderOption.fromCode(method.providerCode)
     Card(
@@ -76,6 +81,14 @@ fun PaymentMethodCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (caption != null) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = caption,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             when {
                 method.isDefault -> Badge(text = "Default", container = HawkEmeraldSoft, content = HawkEmerald, showCheck = true)

@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 from rest_framework.test import APIClient
 
-from conftest import next_key
+from conftest import buy_method_for, next_key
 from core.models import User
 from orders.models import Order
 from payins.models import PayIn
@@ -58,6 +58,7 @@ def test_claim_intent_submit_flow(member, offer, receiving_account):
         {
             'utr': '012345678901', 'idempotency_key': next_key(),
             'intent_token': intent['intent_token'], 'amount': '1', 'status': 'CONFIRMED',
+            'buy_method_id': buy_method_for(member).pk,
         },
         format='json',
     )

@@ -22,9 +22,16 @@ class Rail(models.TextChoices):
 
 class PaymentProvider(models.Model):
     """
-    Admin-managed catalog entry (PhonePe, Google Pay, Paytm, BHIM, Other UPI).
-    Disable instead of deleting: financial records reference providers with
-    PROTECT, so a disabled provider never breaks history.
+    Admin-managed catalog entry. Disable instead of deleting: financial
+    records reference providers with PROTECT, so a disabled provider never
+    breaks history.
+
+    The enabled_for_* flags only decide which providers a member may pick
+    for a NEW method; existing methods keep working whatever the flags say.
+    PERSONAL/BUY providers (the member's own UPI app, used to pay for
+    orders) and BUSINESS/SELL providers (merchant accounts the platform pays
+    out to) are distinct rows - e.g. PHONEPE vs PHONEPE_BUSINESS - and one
+    provider may never be enabled for both sides.
     """
 
     code = models.CharField(max_length=32, unique=True, validators=[provider_code_validator])
@@ -36,7 +43,10 @@ class PaymentProvider(models.Model):
         blank=True,
         help_text='Optional Android package name used to target this UPI app.',
     )
+    # BUSINESS / SELL: members may add new UserPayoutMethods with it.
     enabled_for_payout_methods = models.BooleanField(default=False)
+    # PERSONAL / BUY: members may add new UserBuyMethods with it.
+    enabled_for_buy_methods = models.BooleanField(default=False)
     enabled_for_pay_in = models.BooleanField(default=False)
     sort_order = models.PositiveSmallIntegerField(default=0)
     is_active = models.BooleanField(default=True)
@@ -46,6 +56,12 @@ class PaymentProvider(models.Model):
 
     class Meta:
         ordering = ['sort_order', 'display_name']
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(enabled_for_buy_methods=False) | Q(enabled_for_payout_methods=False),
+                name='paymethods_provider_not_both_buy_and_sell',
+            ),
+        ]
 
     def __str__(self):
         return self.display_name
@@ -121,6 +137,67 @@ class UserPayoutMethod(ImmutableFieldsMixin, models.Model):
 
     def immutability_applies(self):
         return self.orders.exists() or self.payouts.exists()
+
+    def __str__(self):
+        return f'{self.provider} ({self.pk})'
+
+
+class UserBuyMethod(ImmutableFieldsMixin, models.Model):
+    """
+    PERSONAL / BUY: the member's own UPI account they pay for orders from.
+    Recorded on each PayIn it was used for. Never a payout destination -
+    orders and payouts reference UserPayoutMethod only.
+
+    Once a PayIn references a method, its user, provider and UPI ID are
+    frozen; changing them means adding a new method and deactivating this
+    one. The same UPI ID may also be saved as a UserPayoutMethod.
+    """
+
+    immutable_fields = ('user', 'provider', 'upi_id')
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='buy_methods',
+    )
+    provider = models.ForeignKey(
+        PaymentProvider,
+        on_delete=models.PROTECT,
+        related_name='user_buy_methods',
+    )
+    label = models.CharField(max_length=64, blank=True)
+    upi_id = models.CharField(max_length=255, validators=[upi_id_validator])
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(is_active=True) | Q(is_default=False),
+                name='paymethods_ubm_default_must_be_active',
+            ),
+            models.UniqueConstraint(
+                fields=['user'],
+                condition=Q(is_default=True),
+                name='paymethods_ubm_one_default_per_user',
+            ),
+            # UPI IDs are case-insensitive, so compare them lower-cased.
+            models.UniqueConstraint(
+                F('user'),
+                Lower('upi_id'),
+                condition=Q(is_active=True),
+                name='paymethods_ubm_unique_active_upi_per_user',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', 'is_active']),
+        ]
+
+    def immutability_applies(self):
+        return self.pay_ins.exists()
 
     def __str__(self):
         return f'{self.provider} ({self.pk})'

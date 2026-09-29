@@ -27,12 +27,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -47,57 +50,140 @@ import com.example.hawk_wallet.ui.components.AuthErrorBanner
 import com.example.hawk_wallet.ui.components.HawkBackTopBar
 import com.example.hawk_wallet.ui.components.PaymentMethodCard
 import com.example.hawk_wallet.ui.model.PaymentMethodUiModel
+import com.example.hawk_wallet.ui.model.PaymentProviderOption
+import com.example.hawk_wallet.ui.model.ProviderSide
 import com.example.hawk_wallet.ui.theme.HawkCoral
 import com.example.hawk_wallet.ui.theme.HawkIndigo
 import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
 
 private val ScreenHorizontalPadding = 20.dp
 
+/** Tab indexes of the [ BUY ] [ SELL ] control, in display order. */
+const val PAYMENT_METHODS_TAB_BUY = 0
+const val PAYMENT_METHODS_TAB_SELL = 1
+
+/**
+ * One Payment Methods screen with a BUY / SELL tab row (same TabRow style as
+ * Orders). BUY lists the member's PERSONAL accounts (/api/buy-methods/), SELL
+ * the BUSINESS payout accounts (/api/payout-methods/). The two lists never mix.
+ */
 @Composable
 fun PaymentMethodsScreen(
-    viewModel: PaymentMethodsViewModel,
+    sellViewModel: PaymentMethodsViewModel,
+    buyViewModel: BuyMethodsViewModel,
     onBackClick: () -> Unit,
-    onAddClick: () -> Unit
+    onAddSellClick: () -> Unit,
+    onAddBuyClick: () -> Unit,
+    initialTab: Int = PAYMENT_METHODS_TAB_BUY
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val sellState by sellViewModel.uiState.collectAsState()
+    val buyState by buyViewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // GET /api/payout-methods/ each time the screen opens.
-    LaunchedEffect(Unit) { viewModel.refresh() }
+    // Both lists load each time the screen opens (also after returning from an add).
+    LaunchedEffect(Unit) {
+        sellViewModel.refresh()
+        buyViewModel.refresh()
+    }
 
-    LaunchedEffect(uiState.message) {
-        uiState.message?.let {
+    LaunchedEffect(sellState.message) {
+        sellState.message?.let {
             snackbarHostState.showSnackbar(it)
-            viewModel.messageShown()
+            sellViewModel.messageShown()
+        }
+    }
+    LaunchedEffect(buyState.message) {
+        buyState.message?.let {
+            snackbarHostState.showSnackbar(it)
+            buyViewModel.messageShown()
         }
     }
 
     PaymentMethodsContent(
-        methods = uiState.methods,
-        isLoading = uiState.isLoading,
-        loadError = uiState.loadError,
-        busyMethodId = uiState.busyMethodId,
+        initialTab = initialTab,
+        sellState = sellState,
+        buyState = buyState,
         snackbarHostState = snackbarHostState,
         onBackClick = onBackClick,
-        onAddClick = onAddClick,
-        onRetry = viewModel::refresh,
-        onMakeDefault = viewModel::makeDefault,
-        onDeactivate = viewModel::deactivate
+        sellActions = MethodListActions(
+            onAdd = onAddSellClick,
+            onRetry = sellViewModel::refresh,
+            onMakeDefault = sellViewModel::makeDefault,
+            onDeactivate = sellViewModel::deactivate
+        ),
+        buyActions = MethodListActions(
+            onAdd = onAddBuyClick,
+            onRetry = buyViewModel::refresh,
+            onMakeDefault = buyViewModel::makeDefault,
+            onDeactivate = buyViewModel::deactivate
+        )
     )
 }
 
+/** Callbacks for one tab's account list. */
+internal data class MethodListActions(
+    val onAdd: () -> Unit = {},
+    val onRetry: () -> Unit = {},
+    val onMakeDefault: (Long) -> Unit = {},
+    val onDeactivate: (Long) -> Unit = {}
+)
+
 @Composable
 private fun PaymentMethodsContent(
+    initialTab: Int,
+    sellState: PaymentMethodsUiState,
+    buyState: BuyMethodsUiState,
+    snackbarHostState: SnackbarHostState,
+    onBackClick: () -> Unit,
+    sellActions: MethodListActions,
+    buyActions: MethodListActions
+) {
+    // Survives recomposition, rotation and returning from an add screen.
+    var tab by rememberSaveable { mutableIntStateOf(initialTab) }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { HawkBackTopBar(title = "Payment Methods", onBackClick = onBackClick) },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            TabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
+                Tab(selected = tab == PAYMENT_METHODS_TAB_BUY, onClick = { tab = PAYMENT_METHODS_TAB_BUY }, text = { Text("BUY") })
+                Tab(selected = tab == PAYMENT_METHODS_TAB_SELL, onClick = { tab = PAYMENT_METHODS_TAB_SELL }, text = { Text("SELL") })
+            }
+            if (tab == PAYMENT_METHODS_TAB_BUY) {
+                BuyMethodsList(
+                    methods = buyState.methods,
+                    isLoading = buyState.isLoading,
+                    loadError = buyState.loadError,
+                    busyMethodId = buyState.busyMethodId,
+                    actions = buyActions
+                )
+            } else {
+                SellMethodsList(
+                    methods = sellState.methods,
+                    isLoading = sellState.isLoading,
+                    loadError = sellState.loadError,
+                    busyMethodId = sellState.busyMethodId,
+                    actions = sellActions
+                )
+            }
+        }
+    }
+}
+
+/** SELL tab: the member's BUSINESS payout accounts. */
+@Composable
+private fun SellMethodsList(
     methods: List<PaymentMethodUiModel>,
     isLoading: Boolean,
     loadError: String?,
     busyMethodId: Long?,
-    snackbarHostState: SnackbarHostState,
-    onBackClick: () -> Unit,
-    onAddClick: () -> Unit,
-    onRetry: () -> Unit,
-    onMakeDefault: (Long) -> Unit,
-    onDeactivate: (Long) -> Unit
+    actions: MethodListActions
 ) {
     // Same order the backend list uses: default first, then newest.
     val ordered = remember(methods) {
@@ -105,79 +191,92 @@ private fun PaymentMethodsContent(
     }
     var pendingDeactivateId by rememberSaveable { mutableStateOf<Long?>(null) }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = { HawkBackTopBar(title = "My Payment Methods", onBackClick = onBackClick) },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
-    ) { innerPadding ->
-        when {
-            ordered.isEmpty() && isLoading -> Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-                contentAlignment = Alignment.Center
+    when {
+        ordered.isEmpty() && isLoading -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        ordered.isEmpty() && loadError != null -> LoadError(message = loadError, onRetry = actions.onRetry)
+        ordered.isEmpty() -> EmptyPaymentMethods(onAddClick = actions.onAdd)
+        else -> {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = ScreenHorizontalPadding, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                CircularProgressIndicator()
-            }
-            ordered.isEmpty() && loadError != null -> LoadError(
-                message = loadError,
-                onRetry = onRetry,
-                modifier = Modifier.padding(innerPadding)
-            )
-            ordered.isEmpty() -> EmptyPaymentMethods(onAddClick = onAddClick, modifier = Modifier.padding(innerPadding))
-            else -> {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding),
-                    contentPadding = PaddingValues(horizontal = ScreenHorizontalPadding, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    if (loadError != null) {
-                        item {
-                            AuthErrorBanner(message = loadError)
-                            TextButton(onClick = onRetry) { Text("Retry") }
-                        }
-                    }
+                if (loadError != null) {
                     item {
-                        Text(
-                            text = "Payouts are sent to your default active method.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        AuthErrorBanner(message = loadError)
+                        TextButton(onClick = actions.onRetry) { Text("Retry") }
                     }
-                    items(ordered, key = { it.id }) { method ->
-                        PaymentMethodCard(
-                            method = method,
-                            actionsEnabled = busyMethodId == null,
-                            onMakeDefault = { onMakeDefault(method.id) },
-                            onDeactivate = { pendingDeactivateId = method.id }
-                        )
-                    }
-                    item {
-                        AddMethodButton(onClick = onAddClick, modifier = Modifier.padding(top = 8.dp, bottom = 24.dp))
-                    }
+                }
+                item {
+                    SellSectionHeader(
+                        title = "Your payout accounts",
+                        description = "Hawk Wallet sends your order payouts to these UPI accounts. " +
+                            "When you claim an order, the account you choose (or your default) is " +
+                            "fixed to that order.",
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
+                items(ordered, key = { it.id }) { method ->
+                    PaymentMethodCard(
+                        method = method,
+                        actionsEnabled = busyMethodId == null,
+                        onMakeDefault = { actions.onMakeDefault(method.id) },
+                        onDeactivate = { pendingDeactivateId = method.id },
+                        caption = sellAccountCaption(method.providerCode)
+                    )
+                }
+                item {
+                    AddMethodButton(
+                        text = "Add SELL Account",
+                        onClick = actions.onAdd,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
+                    )
                 }
             }
         }
     }
 
     pendingDeactivateId?.let { id ->
-        AlertDialog(
-            onDismissRequest = { pendingDeactivateId = null },
-            title = { Text("Deactivate this payment method?") },
-            text = { Text("It will no longer receive payouts. You can add it again later.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDeactivate(id)
-                    pendingDeactivateId = null
-                }) { Text("Deactivate", color = HawkCoral) }
+        DeactivateDialog(
+            title = "Deactivate this SELL account?",
+            text = "You won't be able to choose it for new orders. Orders you've already claimed " +
+                "keep paying out to it. You can add it again later.",
+            onConfirm = {
+                actions.onDeactivate(id)
+                pendingDeactivateId = null
             },
-            dismissButton = {
-                TextButton(onClick = { pendingDeactivateId = null }) { Text("Cancel") }
-            }
+            onDismiss = { pendingDeactivateId = null }
         )
     }
+}
+
+/**
+ * Quiet caption for a SELL card. SELL accounts saved before the BUY / SELL
+ * split may use a provider that is now PERSONAL-only; they stay valid, so
+ * they are marked as existing accounts rather than hidden. Display only.
+ */
+internal fun sellAccountCaption(providerCode: String): String? =
+    when (PaymentProviderOption.fromCode(providerCode)?.side) {
+        ProviderSide.PERSONAL -> "Existing SELL account"
+        ProviderSide.BUSINESS -> "Business account"
+        null -> null
+    }
+
+@Composable
+internal fun DeactivateDialog(title: String, text: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(text) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("Deactivate", color = HawkCoral) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable
@@ -201,27 +300,30 @@ private fun EmptyPaymentMethods(onAddClick: () -> Unit, modifier: Modifier = Mod
                 )
             }
             Spacer(modifier = Modifier.height(20.dp))
+            SellTag()
+            Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "No payment methods yet",
+                text = "No SELL accounts yet",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Add your UPI ID and QR code so we know where to send your payouts.",
+                text = "Add the UPI account where Hawk Wallet should send your payouts. " +
+                    "You need one before you can claim an order.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(28.dp))
-            AddMethodButton(onClick = onAddClick)
+            AddMethodButton(text = "Add SELL Account", onClick = onAddClick)
         }
     }
 }
 
 @Composable
-private fun LoadError(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+internal fun LoadError(message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(
             modifier = Modifier.padding(horizontal = 32.dp),
@@ -246,8 +348,9 @@ private fun LoadError(message: String, onRetry: () -> Unit, modifier: Modifier =
     }
 }
 
+/** The "+ Add … Account" button at the bottom of each tab's list. */
 @Composable
-private fun AddMethodButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun AddMethodButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Button(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
@@ -257,48 +360,65 @@ private fun AddMethodButton(onClick: () -> Unit, modifier: Modifier = Modifier) 
     ) {
         Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(20.dp))
         Spacer(modifier = Modifier.width(8.dp))
-        Text("Add Payment Method", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
     }
 }
 
 @Preview(showBackground = true, heightDp = 800)
 @Composable
-private fun PaymentMethodsPreview() {
+private fun PaymentMethodsBuyPreview() {
     Hawk_WalletTheme {
         PaymentMethodsContent(
-            methods = listOf(
-                PaymentMethodUiModel(1, "PHONEPE", "PhonePe", "", "lucky@ybl", null, isDefault = true, isActive = true),
-                PaymentMethodUiModel(2, "GOOGLE_PAY", "Google Pay", "", "lucky@okaxis", null, isDefault = false, isActive = true),
-                PaymentMethodUiModel(3, "BHIM", "BHIM", "", "lucky@upi", null, isDefault = false, isActive = false)
+            initialTab = PAYMENT_METHODS_TAB_BUY,
+            sellState = PaymentMethodsUiState(),
+            buyState = BuyMethodsUiState(
+                methods = listOf(
+                    PaymentMethodUiModel(1, "PHONEPE", "PhonePe", "", "lucky@ybl", null, isDefault = true, isActive = true),
+                    PaymentMethodUiModel(2, "GOOGLE_PAY", "Google Pay", "", "lucky@okaxis", null, isDefault = false, isActive = true)
+                )
             ),
-            isLoading = false,
-            loadError = null,
-            busyMethodId = null,
             snackbarHostState = SnackbarHostState(),
             onBackClick = {},
-            onAddClick = {},
-            onRetry = {},
-            onMakeDefault = {},
-            onDeactivate = {}
+            sellActions = MethodListActions(),
+            buyActions = MethodListActions()
         )
     }
 }
 
 @Preview(showBackground = true, heightDp = 800)
 @Composable
-private fun PaymentMethodsEmptyPreview() {
+private fun PaymentMethodsSellPreview() {
     Hawk_WalletTheme {
         PaymentMethodsContent(
-            methods = emptyList(),
-            isLoading = false,
-            loadError = null,
-            busyMethodId = null,
+            initialTab = PAYMENT_METHODS_TAB_SELL,
+            sellState = PaymentMethodsUiState(
+                methods = listOf(
+                    PaymentMethodUiModel(1, "PHONEPE_BUSINESS", "PhonePe Business", "", "shop@ybl", null, isDefault = true, isActive = true),
+                    PaymentMethodUiModel(2, "PHONEPE", "PhonePe", "", "lucky@axl", null, isDefault = false, isActive = true),
+                    PaymentMethodUiModel(3, "BHARATPE", "BharatPe", "", "shop@bharatpe", null, isDefault = false, isActive = false)
+                )
+            ),
+            buyState = BuyMethodsUiState(),
             snackbarHostState = SnackbarHostState(),
             onBackClick = {},
-            onAddClick = {},
-            onRetry = {},
-            onMakeDefault = {},
-            onDeactivate = {}
+            sellActions = MethodListActions(),
+            buyActions = MethodListActions()
+        )
+    }
+}
+
+@Preview(showBackground = true, heightDp = 800)
+@Composable
+private fun PaymentMethodsEmptySellPreview() {
+    Hawk_WalletTheme {
+        PaymentMethodsContent(
+            initialTab = PAYMENT_METHODS_TAB_SELL,
+            sellState = PaymentMethodsUiState(),
+            buyState = BuyMethodsUiState(),
+            snackbarHostState = SnackbarHostState(),
+            onBackClick = {},
+            sellActions = MethodListActions(),
+            buyActions = MethodListActions()
         )
     }
 }

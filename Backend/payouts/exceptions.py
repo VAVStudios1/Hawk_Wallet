@@ -81,3 +81,23 @@ class PayoutUtrAlreadyUsed(PayoutError):
 class PayoutTotalConflict(PayoutError):
     code = 'payout_total_conflict'
     default_message = 'Marking this payout paid would exceed what was committed on the order.'
+
+
+class InvalidCancellationReason(PayoutError):
+    code = 'invalid_cancellation_reason'
+    default_message = 'A cancellation reason (1-500 characters) is required.'
+
+
+class PayoutNotCancellable(PayoutError):
+    code = 'payout_not_cancellable'
+    default_message = 'Only a pending payout can be cancelled.'
+
+
+class PayoutAlreadyCancelled(PayoutError):
+    code = 'payout_already_cancelled'
+    default_message = 'This payout was already cancelled with a different reason.'
+
+
+class PayoutQrNotFound(PayoutError):
+    code = 'payout_qr_not_found'
+    default_message = 'The payout QR image is not available.'

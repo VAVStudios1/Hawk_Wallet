@@ -24,7 +24,8 @@ private val TileShape = RoundedCornerShape(14.dp)
 /**
  * Provider brand mark on a white rounded tile. The logo is scaled to fit
  * (never stretched) so every brand sits at the same visual size. Unknown
- * providers (e.g. added later on the backend) fall back to a neutral icon.
+ * providers (e.g. added later on the backend) and providers without a logo
+ * asset yet fall back to a neutral icon.
  */
 @Composable
 fun ProviderLogo(
@@ -38,15 +39,20 @@ fun ProviderLogo(
             .border(1.dp, MaterialTheme.colorScheme.outline, TileShape),
         contentAlignment = Alignment.Center
     ) {
-        if (provider != null) {
+        val logoRes = provider?.logoRes
+        if (provider != null && logoRes != null) {
             Image(
-                painter = painterResource(provider.logoRes),
+                painter = painterResource(logoRes),
                 contentDescription = "${provider.displayName} logo",
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.size(30.dp)
             )
         } else {
-            Icon(imageVector = Icons.Filled.Payments, contentDescription = null, tint = HawkIndigo)
+            Icon(
+                imageVector = Icons.Filled.Payments,
+                contentDescription = provider?.let { "${it.displayName} logo" },
+                tint = HawkIndigo
+            )
         }
     }
 }

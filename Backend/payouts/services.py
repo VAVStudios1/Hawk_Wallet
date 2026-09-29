@@ -15,6 +15,7 @@ payouts cannot over-commit or be paid twice; the DB constraints
 payout_committed_total, one PAID payout per UTR) remain the final guard
 (e.g. on SQLite, where row locks are a no-op).
 """
+import mimetypes
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -30,18 +31,22 @@ from orders.models import Order
 from payins.models import PayIn
 from payouts.exceptions import (
     IdempotencyKeyConflict,
+    InvalidCancellationReason,
     InvalidIdempotencyKey,
     InvalidPayoutAmount,
     InvalidPayoutUtr,
     OrderNotInPayout,
     OrderNotPayable,
+    PayoutAlreadyCancelled,
     PayoutAlreadyPaid,
     PayoutConflict,
     PayoutExceedsRemaining,
+    PayoutNotCancellable,
     PayoutNotFound,
     PayoutNotPending,
     PayoutOrderNotFound,
     PayoutPermissionDenied,
+    PayoutQrNotFound,
     PayoutTotalConflict,
     PayoutUtrAlreadyUsed,
 )
@@ -59,6 +64,8 @@ RUPEES = Decimal('1.00')
 STRICT_UTR = re.compile(r'[0-9]{12}')
 # A pay-in UTR in one of these states is a live claim on that bank transfer.
 ACTIVE_PAYIN_STATUSES = (PayIn.Status.UNDER_REVIEW, PayIn.Status.CONFIRMED)
+# Same limit as a pay-in rejection reason.
+CANCELLATION_REASON_MAX_LENGTH = 500
 
 
 def create_payout(*, admin, order_id, amount, idempotency_key):
@@ -231,6 +238,79 @@ def mark_payout_paid(*, admin, payout_id, utr, idempotency_key):
         raise PayoutConflict()
 
 
+def cancel_payout(*, admin, payout_id, cancellation_reason, idempotency_key):
+    """
+    Cancel PENDING payout `payout_id` (one created by mistake) and return it.
+
+    PENDING -> CANCELLED: the payout's amount is released from the order's
+    payout_committed_total, so it can be committed again by a new payout.
+    payout_paid_total, the order status and the member's money are
+    untouched. The order must be PAYOUT_IN_PROGRESS (every PENDING payout's
+    order is). cancellation_reason must be non-blank and at most 500
+    characters; it is stored as-is in Payout.note. A CANCELLED payout is
+    frozen, like a PAID one.
+
+    Ledger: one PAYOUT_CANCELLED entry for the released amount, with empty
+    balances - what the platform owes (payout_target - payout_paid_total)
+    does not change.
+
+    Idempotency: as with mark_payout_paid, Payout has no field for the key,
+    so idempotency_key is validated but not stored and replays are
+    recognised from the payout's own state. Cancelling an already-CANCELLED
+    payout with the same reason returns it unchanged; with a different
+    reason it raises PayoutAlreadyCancelled. PAID and FAILED payouts raise
+    PayoutNotCancellable.
+    """
+    if not is_active_admin(admin):
+        raise PayoutPermissionDenied('Only active admins can cancel payouts.')
+    _validate_idempotency_key(idempotency_key)
+    _validate_cancellation_reason(cancellation_reason)
+
+    try:
+        with transaction.atomic():
+            _lock_user(admin)
+            order, payout = _lock_order_and_payout(payout_id)
+
+            if payout.status == Payout.Status.CANCELLED:
+                return _replay_cancelled(payout, cancellation_reason)
+            if payout.status != Payout.Status.PENDING:
+                raise PayoutNotCancellable()
+            if order.status != Order.Status.PAYOUT_IN_PROGRESS:
+                raise OrderNotInPayout(
+                    'Payouts can only be cancelled while the order payout is in progress.'
+                )
+            new_committed_total = order.payout_committed_total - payout.amount
+            if new_committed_total < order.payout_paid_total:
+                # Only reachable if the order totals and its payouts disagree.
+                raise PayoutTotalConflict(
+                    'Cancelling this payout would leave less committed than already paid.'
+                )
+
+            payout.status = Payout.Status.CANCELLED
+            payout.note = cancellation_reason
+            payout.save(update_fields=['status', 'note', 'updated_at'])
+
+            order.payout_committed_total = new_committed_total
+            order.save(update_fields=['payout_committed_total', 'updated_at'])
+
+            record_ledger_entry(
+                actor=admin,
+                action=LedgerEntry.Action.PAYOUT_CANCELLED,
+                order=order,
+                payout=payout,
+                amount=payout.amount,
+                reference_id=order.reference,
+            )
+            return payout
+    except IntegrityError:
+        # A concurrent request cancelled or paid this payout; everything
+        # this attempt did rolled back.
+        payout = Payout.objects.filter(pk=_as_pk(payout_id)).first()
+        if payout is not None and payout.status == Payout.Status.CANCELLED:
+            return _replay_cancelled(payout, cancellation_reason)
+        raise PayoutConflict()
+
+
 @dataclass(frozen=True)
 class AdminPayoutMethodView:
     """What an admin needs to send one payout, and nothing else."""
@@ -299,6 +379,52 @@ def get_payout_method_for_admin(*, admin, payout_id, ip_address=None):
     )
 
 
+@dataclass(frozen=True)
+class AdminPayoutQr:
+    """An opened payout QR file; the caller must close `file`."""
+
+    file: object
+    content_type: str
+
+
+def get_payout_qr_for_admin(*, admin, payout_id, ip_address=None):
+    """
+    Open the QR image of the payout method fixed on payout `payout_id`, for
+    an active admin, and return it with its content type.
+
+    The QR lives in private storage and has no URL; this is the only way to
+    read it. Like get_payout_method_for_admin it uses the payout's own
+    method (frozen once used) and works for a payout in any status. Each
+    successful call records one PAYOUT_METHOD_QR_VIEWED AuditEvent
+    (identifiers only in metadata). Read-only for financial state.
+    """
+    if not is_active_admin(admin):
+        raise PayoutPermissionDenied('Only active admins can view payout methods.')
+    pk = _as_pk(payout_id)
+    payout = Payout.objects.select_related('payout_method').filter(pk=pk).first() if pk else None
+    if payout is None:
+        raise PayoutNotFound()
+
+    method = payout.payout_method
+    try:
+        qr_file = method.qr_image.storage.open(method.qr_image.name, 'rb')
+    except (FileNotFoundError, ValueError):
+        raise PayoutQrNotFound()
+    try:
+        record_audit_event(
+            actor=admin,
+            action=AuditEvent.Action.PAYOUT_METHOD_QR_VIEWED,
+            target=method,
+            ip_address=ip_address,
+            metadata={'payout_id': payout.pk, 'order_id': payout.order_id},
+        )
+    except BaseException:
+        qr_file.close()
+        raise
+    content_type = mimetypes.guess_type(method.qr_image.name)[0] or 'application/octet-stream'
+    return AdminPayoutQr(file=qr_file, content_type=content_type)
+
+
 def _validate_utr(utr):
     if not isinstance(utr, str) or STRICT_UTR.fullmatch(utr) is None:
         raise InvalidPayoutUtr()
@@ -323,6 +449,21 @@ def _replay_paid(payout, utr):
     if payout.utr != utr:
         raise PayoutAlreadyPaid()
     return payout
+
+
+def _replay_cancelled(payout, cancellation_reason):
+    if payout.note != cancellation_reason:
+        raise PayoutAlreadyCancelled()
+    return payout
+
+
+def _validate_cancellation_reason(reason):
+    if (
+        not isinstance(reason, str)
+        or not reason.strip()
+        or len(reason) > CANCELLATION_REASON_MAX_LENGTH
+    ):
+        raise InvalidCancellationReason()
 
 
 def _utr_in_use(utr):

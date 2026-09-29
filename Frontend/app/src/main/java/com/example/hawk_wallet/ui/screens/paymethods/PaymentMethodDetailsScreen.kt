@@ -144,7 +144,7 @@ private fun PaymentMethodDetailsContent(
                         strokeWidth = 2.dp
                     )
                 } else {
-                    Text("Save Payment Method", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("Save SELL Account", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 }
             }
             Spacer(modifier = Modifier.height(24.dp))

@@ -3,7 +3,7 @@ import pytest
 from rest_framework.test import APIClient
 
 from audit.models import AuditEvent
-from conftest import next_key
+from conftest import buy_method_for, next_key
 from core.models import User
 from orders.models import Order
 from payins.services import get_pay_in_intent, submit_pay_in_utr
@@ -31,6 +31,7 @@ def submitted(member, make_order, receiving_account):
     return submit_pay_in_utr(
         user=member, order_id=order.pk, utr='555555555555',
         idempotency_key=next_key(), intent_token=intent.intent_token,
+        buy_method_id=buy_method_for(member).pk,
     )
 
 
@@ -128,3 +129,66 @@ def test_invalid_input(admin_client, submitted):
                      {'utr': '012345678901', 'idempotency_key': next_key()})
     assert response.status_code == 404
     assert not Payout.objects.exists()
+
+
+def test_partial_payouts_cancel_and_order_detail_history(admin_client, admin_user, submitted):
+    _confirm(admin_client, submitted)
+    order_id = submitted.order_id
+    create_url = f'/api/admin/orders/{order_id}/payouts/'
+
+    ids = []
+    for amount in ('100', '150'):
+        response = _post(admin_client, create_url, {'amount': amount, 'idempotency_key': next_key()})
+        assert response.status_code == 201, response.data
+        ids.append(response.data['data']['id'])
+    paid = _post(admin_client, f'/api/admin/payouts/{ids[0]}/paid/',
+                 {'utr': '012345678901', 'idempotency_key': next_key()})
+    assert paid.status_code == 200, paid.data
+
+    # Remaining 15 fits, 16 would exceed the 265 target.
+    over = _post(admin_client, create_url, {'amount': '16', 'idempotency_key': next_key()})
+    assert over.status_code == 409
+    assert over.data['errors']['code'] == 'payout_exceeds_remaining'
+
+    cancel_url = f'/api/admin/payouts/{ids[1]}/cancel/'
+    body = {'cancellation_reason': 'Wrong amount', 'idempotency_key': next_key()}
+    response = _post(admin_client, cancel_url, body)
+    assert response.status_code == 200, response.data
+    assert response.data['data']['status'] == Payout.Status.CANCELLED
+    assert response.data['data']['order_payout_committed_total'] == '100.00'
+
+    replay = _post(admin_client, cancel_url, body)
+    assert replay.status_code == 200, replay.data
+    different = _post(admin_client, cancel_url,
+                      {'cancellation_reason': 'Other', 'idempotency_key': next_key()})
+    assert different.status_code == 409
+    assert different.data['errors']['code'] == 'payout_already_cancelled'
+    paid_cancel = _post(admin_client, f'/api/admin/payouts/{ids[0]}/cancel/',
+                        {'cancellation_reason': 'Oops', 'idempotency_key': next_key()})
+    assert paid_cancel.status_code == 409
+    assert paid_cancel.data['errors']['code'] == 'payout_not_cancellable'
+    blank = _post(admin_client, cancel_url, {'cancellation_reason': ' ', 'idempotency_key': next_key()})
+    assert blank.status_code == 400
+    assert blank.data['errors']['code'] == 'invalid_cancellation_reason'
+
+    detail = admin_client.get(f'/api/admin/orders/{order_id}/').data['data']
+    assert detail['payout_target'] == '265.00'
+    assert detail['payout_committed_total'] == '100.00'
+    assert detail['remaining_to_commit'] == '165.00'
+    history = detail['payouts']
+    assert [p['id'] for p in history] == ids
+    assert set(history[0]) == {
+        'id', 'amount', 'status', 'utr', 'created_by', 'paid_by', 'created_at',
+        'paid_at', 'provider_code', 'provider_name', 'upi_id', 'cancellation_reason',
+    }
+    assert history[0]['status'] == Payout.Status.PAID
+    assert history[0]['utr'] == '012345678901'
+    assert history[0]['paid_by'] == admin_user.pk
+    assert history[0]['upi_id'] == 'member@ybl' and history[0]['provider_code'] == 'PHONEPE'
+    assert history[1]['status'] == Payout.Status.CANCELLED
+    assert history[1]['amount'] == '150.00'
+    assert history[1]['cancellation_reason'] == 'Wrong amount'
+    assert history[1]['created_by'] == admin_user.pk
+    assert history[1]['paid_by'] is None and history[1]['paid_at'] is None
+    # The QR stays private: no storage path or URL in the detail.
+    assert 'payout_qr' not in str(detail) and 'qr' not in str(history)

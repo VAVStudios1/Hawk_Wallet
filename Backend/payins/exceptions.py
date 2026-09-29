@@ -60,6 +60,17 @@ class PayerAppUnavailable(PayInError):
     default_message = 'Choose one of the available UPI apps.'
 
 
+class BuyMethodRequired(PayInError):
+    code = 'buy_method_required'
+    default_message = 'Choose the UPI account you paid from.'
+
+
+class BuyMethodUnavailable(PayInError):
+    # Covers unknown ids, inactive methods and other users' methods alike.
+    code = 'buy_method_unavailable'
+    default_message = 'Choose one of your active UPI accounts you paid from.'
+
+
 class PayInConflict(PayInError):
     code = 'conflict'
     default_message = 'The payment could not be submitted. Please try again.'

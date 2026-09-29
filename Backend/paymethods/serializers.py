@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from paymethods.models import UserPayoutMethod
+from paymethods.models import UserBuyMethod, UserPayoutMethod
 
 
 class AddPayoutMethodSerializer(serializers.Serializer):
@@ -78,3 +78,74 @@ class PayoutMethodListItemSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = fields
+
+
+class AddBuyMethodSerializer(serializers.Serializer):
+    """
+    Input for add_buy_method (JSON; a BUY method has no QR). Only these
+    fields are read; anything else (user, is_default, is_active, ...) is
+    ignored. At least one of provider / provider_code is required.
+    """
+
+    provider = serializers.IntegerField(min_value=1, required=False)
+    provider_code = serializers.CharField(max_length=32, required=False)
+    label = serializers.CharField(max_length=64, required=False, allow_blank=True, default='')
+    upi_id = serializers.CharField(max_length=255)
+
+    def validate(self, attrs):
+        if 'provider' not in attrs and 'provider_code' not in attrs:
+            raise serializers.ValidationError({'provider': ['This field is required.']})
+        return attrs
+
+
+class BuyMethodSerializer(serializers.ModelSerializer):
+    """What a member sees of their own buy method (flat provider fields)."""
+
+    provider_code = serializers.CharField(source='provider.code', read_only=True)
+    provider_name = serializers.CharField(source='provider.display_name', read_only=True)
+
+    class Meta:
+        model = UserBuyMethod
+        fields = [
+            'id',
+            'provider',
+            'provider_code',
+            'provider_name',
+            'label',
+            'upi_id',
+            'is_default',
+            'is_active',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = fields
+
+
+class BuyMethodListItemSerializer(serializers.ModelSerializer):
+    """One saved buy method in the member's list; the owner is left out."""
+
+    provider = PayoutMethodProviderSerializer(read_only=True)
+
+    class Meta:
+        model = UserBuyMethod
+        fields = [
+            'id',
+            'provider',
+            'label',
+            'upi_id',
+            'is_default',
+            'is_active',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = fields
+
+
+class BuyMethodSummarySerializer(serializers.Serializer):
+    """The BUY method recorded on a PayIn: which of the member's own accounts paid."""
+
+    id = serializers.IntegerField()
+    provider_code = serializers.CharField(source='provider.code')
+    provider_name = serializers.CharField(source='provider.display_name')
+    label = serializers.CharField()
+    upi_id = serializers.CharField()

@@ -31,6 +31,7 @@ class PayIn(ImmutableFieldsMixin, UndeletableModel):
         'amount',
         'receiving_account',
         'payee_vpa_snapshot',
+        'buy_method',
         'utr',
         'idempotency_key',
         'submitted_at',
@@ -43,14 +44,18 @@ class PayIn(ImmutableFieldsMixin, UndeletableModel):
         related_name='pay_ins',
     )
     amount = models.DecimalField(max_digits=12, decimal_places=2)
+    # Set only for orders without a Pay-In UPI snapshot (claimed before
+    # offers carried one); otherwise the order's snapshot is the destination.
     receiving_account = models.ForeignKey(
         'paymethods.PlatformReceivingAccount',
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name='pay_ins',
     )
     payee_vpa_snapshot = models.CharField(
         max_length=255,
-        help_text='Receiving VPA at submission time, preserved if the account changes.',
+        help_text='VPA the member paid, preserved whatever changes later.',
     )
     payer_app = models.ForeignKey(
         'paymethods.PaymentProvider',
@@ -60,7 +65,17 @@ class PayIn(ImmutableFieldsMixin, UndeletableModel):
         related_name='+',
         help_text='UPI app the member says they paid with (informational).',
     )
-    utr = models.CharField(max_length=UTR_LENGTH, validators=[utr_validator])
+    # PERSONAL / BUY: the member's own account they paid from. Required for
+    # every new submission (enforced by submit_pay_in_utr); empty only on
+    # PayIns submitted before BUY methods existed.
+    buy_method = models.ForeignKey(
+        'paymethods.UserBuyMethod',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='pay_ins',
+    )
+    utr =models.CharField(max_length=UTR_LENGTH, validators=[utr_validator])
     status = models.CharField(
         max_length=16,
         choices=Status.choices,
@@ -147,6 +162,8 @@ class PayIn(ImmutableFieldsMixin, UndeletableModel):
                 raise ValidationError('PayIn user must be the order owner.')
             if self.amount != order.order_amount:
                 raise ValidationError('PayIn amount must equal the order amount.')
+            if self.buy_method_id is not None and self.buy_method.user_id != order.user_id:
+                raise ValidationError('PayIn buy method must belong to the order owner.')
         super().save(*args, **kwargs)
 
     def __str__(self):

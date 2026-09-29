@@ -22,7 +22,11 @@ urlpatterns = [
     path('api/auth/', include('core.urls')),
     path('api/home/', include('home.urls')),
     path('api/payout-methods/', include('paymethods.urls')),
+    path('api/buy-methods/', include('paymethods.buy_urls')),
     path('api/orders/', include('orders.urls')),
+    path('api/team/', include('team.urls')),
+    path('api/profile/', include('accounts.urls')),
+    path('api/admin/', include('orders.admin_urls')),
     path('api/', include('payins.urls')),
     path('api/', include('payouts.urls')),
 ]

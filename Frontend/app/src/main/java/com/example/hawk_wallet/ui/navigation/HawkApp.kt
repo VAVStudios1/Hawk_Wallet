@@ -12,9 +12,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.rememberNavController
 import com.example.hawk_wallet.data.local.SessionManager
+import com.example.hawk_wallet.data.repository.AdminOrderRepository
 import com.example.hawk_wallet.data.repository.AuthRepository
 import com.example.hawk_wallet.data.repository.HomeRepository
+import com.example.hawk_wallet.data.repository.OrderRepository
+import com.example.hawk_wallet.data.repository.BuyMethodRepository
 import com.example.hawk_wallet.data.repository.PayoutMethodRepository
+import com.example.hawk_wallet.data.repository.ProfileRepository
+import com.example.hawk_wallet.data.repository.TeamRepository
 import com.example.hawk_wallet.ui.screens.splash.SplashScreen
 import kotlinx.coroutines.flow.first
 
@@ -23,6 +28,11 @@ fun HawkApp(
     authRepository: AuthRepository,
     homeRepository: HomeRepository,
     payoutMethodRepository: PayoutMethodRepository,
+    buyMethodRepository: BuyMethodRepository,
+    orderRepository: OrderRepository,
+    adminOrderRepository: AdminOrderRepository,
+    teamRepository: TeamRepository,
+    profileRepository: ProfileRepository,
     sessionManager: SessionManager
 ) {
     var startDestination by remember { mutableStateOf<String?>(null) }
@@ -50,6 +60,11 @@ fun HawkApp(
                 authRepository = authRepository,
                 homeRepository = homeRepository,
                 payoutMethodRepository = payoutMethodRepository,
+                buyMethodRepository = buyMethodRepository,
+                orderRepository = orderRepository,
+                adminOrderRepository = adminOrderRepository,
+                teamRepository = teamRepository,
+                profileRepository = profileRepository,
                 sessionManager = sessionManager,
                 startDestination = destination
             )

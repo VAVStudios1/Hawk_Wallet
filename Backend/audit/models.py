@@ -26,6 +26,9 @@ class LedgerEntry(AppendOnlyModel):
         PAYOUT_PAID = 'PAYOUT_PAID', 'Payout paid'
         PAYOUT_FAILED = 'PAYOUT_FAILED', 'Payout failed'
         PAYOUT_CANCELLED = 'PAYOUT_CANCELLED', 'Payout cancelled'
+        # A team commission created by the order's confirmed pay-in. It does
+        # not change the order's outstanding payout, so balances are empty.
+        COMMISSION_EARNED = 'COMMISSION_EARNED', 'Commission earned'
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -46,6 +49,13 @@ class LedgerEntry(AppendOnlyModel):
     )
     payout = models.ForeignKey(
         'payouts.Payout',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='ledger_entries',
+    )
+    commission = models.ForeignKey(
+        'team.Commission',
         on_delete=models.PROTECT,
         null=True,
         blank=True,
@@ -96,10 +106,17 @@ class AuditEvent(AppendOnlyModel):
         PAYOUT_METHOD_CREATED = 'PAYOUT_METHOD_CREATED', 'Payout method created'
         PAYOUT_METHOD_DEACTIVATED = 'PAYOUT_METHOD_DEACTIVATED', 'Payout method deactivated'
         PAYOUT_METHOD_DEFAULT_CHANGED = 'PAYOUT_METHOD_DEFAULT_CHANGED', 'Default payout method changed'
-        PROVIDER_CHANGED = 'PROVIDER_CHANGED', 'Payment provider changed'
+        BUY_METHOD_VIEWED = 'BUY_METHOD_VIEWED', 'Buy method viewed'
+        BUY_METHOD_CREATED = 'BUY_METHOD_CREATED', 'Buy method created'
+        BUY_METHOD_DEACTIVATED = 'BUY_METHOD_DEACTIVATED', 'Buy method deactivated'
+        BUY_METHOD_DEFAULT_CHANGED = 'BUY_METHOD_DEFAULT_CHANGED', 'Default buy method changed'
+        PROVIDER_CHANGED ='PROVIDER_CHANGED', 'Payment provider changed'
         RECEIVING_ACCOUNT_CHANGED = 'RECEIVING_ACCOUNT_CHANGED', 'Receiving account changed'
         OFFER_CHANGED = 'OFFER_CHANGED', 'Offer changed'
         ROLE_CHANGED = 'ROLE_CHANGED', 'Role changed'
+        PROFILE_NAME_CHANGED = 'PROFILE_NAME_CHANGED', 'Profile name changed'
+        # metadata never holds a password, hash or token.
+        PASSWORD_CHANGED = 'PASSWORD_CHANGED', 'Password changed'
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,

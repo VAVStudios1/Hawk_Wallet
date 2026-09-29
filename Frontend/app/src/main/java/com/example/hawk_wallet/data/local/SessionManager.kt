@@ -40,6 +40,19 @@ class SessionManager(private val context: Context) {
         }
     }
 
+    /** Replaces only the token pair (e.g. the one returned by a password change). */
+    suspend fun updateTokens(accessToken: String, refreshToken: String) {
+        context.authDataStore.edit { prefs ->
+            prefs[Keys.ACCESS_TOKEN] = accessToken
+            prefs[Keys.REFRESH_TOKEN] = refreshToken
+        }
+    }
+
+    /** Keeps the cached display name in step after the backend accepts a name change. */
+    suspend fun updateUserName(name: String) {
+        context.authDataStore.edit { prefs -> prefs[Keys.USER_NAME] = name }
+    }
+
     suspend fun getRefreshToken(): String? =
         context.authDataStore.data.map { it[Keys.REFRESH_TOKEN] }.first()
 

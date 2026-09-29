@@ -5,7 +5,7 @@ import pytest
 from rest_framework.test import APIClient
 
 from audit.models import AuditEvent, LedgerEntry
-from conftest import next_key
+from conftest import buy_method_for, next_key
 from core.models import User
 from orders.models import Order
 from payins.models import PayIn
@@ -43,6 +43,7 @@ def _submit(member, order):
     return submit_pay_in_utr(
         user=member, order_id=order.pk, utr=str(next(_utrs)),
         idempotency_key=next_key(), intent_token=intent.intent_token,
+        buy_method_id=buy_method_for(member).pk,
     )
 
 

@@ -4,6 +4,7 @@ import com.example.hawk_wallet.data.remote.model.ApiResponse
 import com.example.hawk_wallet.data.remote.model.toMessages
 import com.google.gson.Gson
 import com.google.gson.JsonElement
+import okhttp3.ResponseBody
 import retrofit2.Response
 import java.io.IOException
 
@@ -38,13 +39,37 @@ internal suspend fun <T> safeApiCall(block: suspend () -> Response<ApiResponse<T
     }
 }
 
+/**
+ * Like [safeApiCall], for endpoints that return a raw file (e.g. a QR image)
+ * instead of the JSON envelope. Errors still arrive as the envelope and are
+ * mapped the same way.
+ */
+internal suspend fun safeBytesCall(block: suspend () -> Response<ResponseBody>): ApiResult<ByteArray> {
+    return try {
+        val response = block()
+        val body = response.body()
+        if (response.isSuccessful && body != null) {
+            ApiResult.Success(body.use { it.bytes() }, "")
+        } else {
+            errorResult(response, fallbackMessage = null)
+        }
+    } catch (e: IOException) {
+        ApiResult.Error("Unable to reach the server. Check your connection.")
+    } catch (e: Exception) {
+        ApiResult.Error("Something went wrong. Please try again.")
+    }
+}
+
 private fun <T> toApiResult(response: Response<ApiResponse<T>>): ApiResult<T> {
     val body = response.body()
     if (response.isSuccessful && body != null && body.success) {
         @Suppress("UNCHECKED_CAST")
         return ApiResult.Success(body.data as T, body.message)
     }
+    return errorResult(response, fallbackMessage = body?.message)
+}
 
+private fun errorResult(response: Response<*>, fallbackMessage: String?): ApiResult.Error {
     // Retrofit only runs the converter on body() for 2xx responses; a
     // 4xx/5xx's real message/errors live in errorBody() and must be
     // parsed manually, or we fall back to a raw "Request failed (400)".
@@ -57,7 +82,7 @@ private fun <T> toApiResult(response: Response<ApiResponse<T>>): ApiResult<T> {
     }
 
     val message = errorBody?.message
-        ?: body?.message
+        ?: fallbackMessage
         ?: "Something went wrong. Please try again."
     val fieldErrors = errorBody?.errors?.mapValues { (_, value) -> value.toMessages() } ?: emptyMap()
     return ApiResult.Error(message, fieldErrors, response.code())

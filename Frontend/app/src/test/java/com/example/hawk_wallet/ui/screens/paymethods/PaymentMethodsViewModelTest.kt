@@ -39,7 +39,7 @@ class PaymentMethodsViewModelTest {
 
     private val state get() = viewModel.uiState.value
 
-    private fun fillForm(provider: PaymentProviderOption = PaymentProviderOption.PHONEPE, upi: String = "lucky@ybl") {
+    private fun fillForm(provider: PaymentProviderOption = PaymentProviderOption.PHONEPE_BUSINESS, upi: String = "lucky@ybl") {
         viewModel.startNewMethod()
         viewModel.selectProvider(provider)
         viewModel.onUpiIdChange(upi)
@@ -85,7 +85,7 @@ class PaymentMethodsViewModelTest {
     @Test
     fun save_requiresUpiAndQrBeforeCallingTheApi() {
         viewModel.startNewMethod()
-        viewModel.selectProvider(PaymentProviderOption.BHIM)
+        viewModel.selectProvider(PaymentProviderOption.BHARATPE)
         viewModel.onUpiIdChange("   ")
 
         viewModel.save()
@@ -97,9 +97,9 @@ class PaymentMethodsViewModelTest {
 
     @Test
     fun save_postsProviderCodeThenReloads() {
-        fillForm(PaymentProviderOption.MOBIKWIK, upi = "  lucky@ikwik ")
-        server.reply(201, flatJson(9, "MOBIKWIK", default = true))
-            .reply(200, listJson(methodJson(9, "MOBIKWIK", "MobiKwik", "lucky@ikwik", default = true)))
+        fillForm(PaymentProviderOption.PAYTM_BUSINESS, upi = "  lucky@paytm ")
+        server.reply(201, flatJson(9, "PAYTM_BUSINESS", default = true))
+            .reply(200, listJson(methodJson(9, "PAYTM_BUSINESS", "Paytm Business", "lucky@paytm", default = true)))
 
         viewModel.save()
 
@@ -107,10 +107,36 @@ class PaymentMethodsViewModelTest {
         assertFalse(state.form.isSaving)
         assertEquals("Payment method added successfully", state.message)
         assertEquals(listOf("POST", "GET"), server.requests.map { it.method })
-        assertEquals("MOBIKWIK", state.methods.single().providerCode)
+        assertEquals("PAYTM_BUSINESS", state.methods.single().providerCode)
 
         viewModel.saveHandled()
         assertFalse(state.form.saved)
+    }
+
+    @Test
+    fun selectProvider_ignoresPersonalProviders() {
+        viewModel.startNewMethod()
+
+        viewModel.selectProvider(PaymentProviderOption.PHONEPE)
+        assertNull(state.form.provider)
+
+        viewModel.selectProvider(PaymentProviderOption.PHONEPE_BUSINESS)
+        assertEquals(PaymentProviderOption.PHONEPE_BUSINESS, state.form.provider)
+    }
+
+    @Test
+    fun providerLists_areSplitBetweenBuyAndSell() {
+        assertEquals(
+            listOf("PHONEPE", "GOOGLE_PAY", "BHIM", "MOBIKWIK"),
+            PaymentProviderOption.personal.map { it.code }
+        )
+        assertEquals(
+            listOf("BHARATPE", "PAYTM_BUSINESS", "PHONEPE_BUSINESS"),
+            PaymentProviderOption.business.map { it.code }
+        )
+        // Legacy SELL methods on personal providers still resolve for display.
+        assertEquals(PaymentProviderOption.PHONEPE, PaymentProviderOption.fromCode("PHONEPE"))
+        assertNull(PaymentProviderOption.PHONEPE_BUSINESS.logoRes)
     }
 
     @Test

@@ -235,7 +235,15 @@ def test_list_orders_default_first_then_newest(user, provider):
 
 # --- seeded providers and provider_code ----------------------------------------
 
+# BUSINESS / SELL providers (paymethods.0004): the only ones offered for new
+# payout methods.
 SEEDED = {
+    'BHARATPE': 'BharatPe',
+    'PAYTM_BUSINESS': 'Paytm Business',
+    'PHONEPE_BUSINESS': 'PhonePe Business',
+}
+# PERSONAL / BUY providers (seeded by 0002, moved to BUY by 0004).
+PERSONAL = {
     'PHONEPE': 'PhonePe',
     'GOOGLE_PAY': 'Google Pay',
     'BHIM': 'BHIM',
@@ -257,8 +265,45 @@ def test_migration_seeds_payout_providers():
         provider = PaymentProvider.objects.get(code=code)
         assert provider.display_name == name
         assert provider.is_active and provider.enabled_for_payout_methods
+        assert not provider.enabled_for_buy_methods
+        assert not provider.enabled_for_pay_in
     orders = [PaymentProvider.objects.get(code=code).sort_order for code in SEEDED]
     assert orders == sorted(orders)
+
+
+@pytest.mark.django_db
+def test_migration_moves_seeded_personal_providers_to_buy():
+    for code, name in PERSONAL.items():
+        provider = PaymentProvider.objects.get(code=code)
+        # Not renamed, still active; only the side changed.
+        assert provider.display_name == name and provider.is_active
+        assert provider.enabled_for_buy_methods
+        assert not provider.enabled_for_payout_methods
+    # PhonePe and PhonePe Business are different providers.
+    assert (
+        PaymentProvider.objects.get(code='PHONEPE').pk
+        != PaymentProvider.objects.get(code='PHONEPE_BUSINESS').pk
+    )
+
+
+@pytest.mark.parametrize('code', list(PERSONAL))
+def test_personal_provider_code_rejected_for_new_payout_method(user, code):
+    _assert_provider_rejected(_add_by_code(_client(user), code))
+
+
+def test_existing_payout_method_on_personal_provider_keeps_working(user, make_method):
+    # A SELL method saved on PHONEPE before the split stays usable after
+    # PHONEPE is switched to BUY: flags only gate NEW methods.
+    method = make_method(user, 'legacy@ybl', is_default=True)
+    second = make_method(user, 'second@ybl')
+    PaymentProvider.objects.filter(code='PHONEPE').update(
+        enabled_for_payout_methods=False, enabled_for_buy_methods=True
+    )
+    client = _client(user)
+
+    assert [m['id'] for m in _methods(user)] == [method.pk, second.pk]
+    assert client.post(f'{URL}{second.pk}/default/').status_code == 200
+    assert client.post(f'{URL}{method.pk}/deactivate/').status_code == 200
 
 
 @pytest.mark.django_db
@@ -287,9 +332,9 @@ def test_add_by_provider_code(user, code):
 
 
 def test_provider_code_is_normalised(user):
-    response = _add_by_code(_client(user), '  google_pay ')
+    response = _add_by_code(_client(user), '  phonepe_business ')
     assert response.status_code == 201, response.data
-    assert response.data['data']['provider_code'] == 'GOOGLE_PAY'
+    assert response.data['data']['provider_code'] == 'PHONEPE_BUSINESS'
 
 
 def _assert_provider_rejected(response, field='provider'):
@@ -307,25 +352,25 @@ def test_unknown_provider_code_rejected(user):
 
 
 def test_inactive_provider_code_rejected(user):
-    PaymentProvider.objects.filter(code='BHIM').update(is_active=False)
-    _assert_provider_rejected(_add_by_code(_client(user), 'BHIM'))
+    PaymentProvider.objects.filter(code='BHARATPE').update(is_active=False)
+    _assert_provider_rejected(_add_by_code(_client(user), 'BHARATPE'))
 
 
 def test_provider_code_disabled_for_payout_methods_rejected(user):
-    PaymentProvider.objects.filter(code='MOBIKWIK').update(enabled_for_payout_methods=False)
-    _assert_provider_rejected(_add_by_code(_client(user), 'MOBIKWIK'))
+    PaymentProvider.objects.filter(code='PAYTM_BUSINESS').update(enabled_for_payout_methods=False)
+    _assert_provider_rejected(_add_by_code(_client(user), 'PAYTM_BUSINESS'))
 
 
 def test_provider_and_matching_code_accepted(user):
-    gpay = PaymentProvider.objects.get(code='GOOGLE_PAY')
-    response = _add_by_code(_client(user), 'GOOGLE_PAY', provider=gpay.pk)
+    business = PaymentProvider.objects.get(code='PHONEPE_BUSINESS')
+    response = _add_by_code(_client(user), 'PHONEPE_BUSINESS', provider=business.pk)
     assert response.status_code == 201, response.data
-    assert response.data['data']['provider'] == gpay.pk
+    assert response.data['data']['provider'] == business.pk
 
 
 def test_provider_and_conflicting_code_rejected(user):
-    gpay = PaymentProvider.objects.get(code='GOOGLE_PAY')
-    response = _add_by_code(_client(user), 'BHIM', provider=gpay.pk)
+    business = PaymentProvider.objects.get(code='PHONEPE_BUSINESS')
+    response = _add_by_code(_client(user), 'BHARATPE', provider=business.pk)
     _assert_provider_rejected(response, field='provider_code')
     assert response.data['errors']['provider_code'] == [
         'provider and provider_code refer to different providers.'
@@ -340,10 +385,10 @@ def test_provider_id_only_still_works(user, provider):
 
 
 def test_unavailable_provider_id_still_rejected(user):
-    bhim = PaymentProvider.objects.get(code='BHIM')
-    PaymentProvider.objects.filter(pk=bhim.pk).update(is_active=False)
+    bharatpe = PaymentProvider.objects.get(code='BHARATPE')
+    PaymentProvider.objects.filter(pk=bharatpe.pk).update(is_active=False)
     response = _client(user).post(
-        URL, {'provider': bhim.pk, 'upi_id': 'lucky@ybl', 'qr_image': _qr()}, format='multipart'
+        URL, {'provider': bharatpe.pk, 'upi_id': 'lucky@ybl', 'qr_image': _qr()}, format='multipart'
     )
     _assert_provider_rejected(response)
 
@@ -357,11 +402,11 @@ def test_missing_provider_and_code_rejected(user):
 
 def test_provider_code_keeps_existing_rules(user):
     client = _client(user)
-    assert _add_by_code(client, 'PHONEPE', 'dup@ybl').status_code == 201
-    duplicate = _add_by_code(client, 'GOOGLE_PAY', 'DUP@ybl')
+    assert _add_by_code(client, 'PHONEPE_BUSINESS', 'dup@ybl').status_code == 201
+    duplicate = _add_by_code(client, 'BHARATPE', 'DUP@ybl')
     assert duplicate.status_code == 409
     assert duplicate.data['errors']['code'] == 'duplicate_upi_id'
-    assert _add_by_code(client, 'BHIM', 'not-a-upi').status_code == 400
+    assert _add_by_code(client, 'PAYTM_BUSINESS', 'not-a-upi').status_code == 400
 
 
 # --- QR image formats and damaged uploads ----------------------------------------
@@ -380,7 +425,7 @@ def _pattern_qr(fmt, name):
 def _add_qr(client, upload, upi_id='lucky@ybl'):
     return client.post(
         URL,
-        {'provider_code': 'PHONEPE', 'upi_id': upi_id, 'label': '', 'qr_image': upload},
+        {'provider_code': 'PHONEPE_BUSINESS', 'upi_id': upi_id, 'label': '', 'qr_image': upload},
         format='multipart',
     )
 

@@ -11,18 +11,23 @@ from conftest import next_key
 from core.models import User
 from orders.models import Order
 from payins.models import PayIn
+from conftest import buy_method_for
 from payins.services import confirm_pay_in, get_pay_in_intent, submit_pay_in_utr
 from paymethods.services import deactivate_payout_method, set_default_payout_method
+from audit.mixins import ImmutableFieldError
 from payouts.exceptions import (
     IdempotencyKeyConflict,
+    InvalidCancellationReason,
     InvalidIdempotencyKey,
     InvalidPayoutAmount,
     InvalidPayoutUtr,
     OrderNotInPayout,
     OrderNotPayable,
+    PayoutAlreadyCancelled,
     PayoutAlreadyPaid,
     PayoutConflict,
     PayoutExceedsRemaining,
+    PayoutNotCancellable,
     PayoutNotFound,
     PayoutNotPending,
     PayoutOrderNotFound,
@@ -35,6 +40,7 @@ from payouts.models import Payout
 from paymethods.models import PaymentProvider
 from payouts.services import (
     AdminPayoutMethodView,
+    cancel_payout,
     create_payout,
     get_payout_method_for_admin,
     mark_payout_paid,
@@ -66,6 +72,7 @@ def active_order(member, make_order, receiving_account, admin_user):
     payin = submit_pay_in_utr(
         user=member, order_id=order.pk, utr='555555555555',
         idempotency_key=next_key(), intent_token=intent.intent_token,
+        buy_method_id=buy_method_for(member).pk,
     )
     confirm_pay_in(admin=admin_user, payin_id=payin.pk, idempotency_key=next_key())
     order.refresh_from_db()
@@ -283,6 +290,7 @@ def test_payment_under_review_order_rejected(admin_user, member, make_order, rec
     submit_pay_in_utr(
         user=member, order_id=order.pk, utr='555555555555',
         idempotency_key=next_key(), intent_token=intent.intent_token,
+        buy_method_id=buy_method_for(member).pk,
     )
 
     with pytest.raises(OrderNotPayable):
@@ -735,6 +743,7 @@ def test_utr_of_under_review_payin_rejected(admin_user, member, make_order, acti
     payin = submit_pay_in_utr(
         user=member, order_id=other.pk, utr='777777777777',
         idempotency_key=next_key(), intent_token=intent.intent_token,
+        buy_method_id=buy_method_for(member).pk,
     )
     assert payin.status == PayIn.Status.UNDER_REVIEW
     payin_before = PayIn.objects.values().get(pk=payin.pk)
@@ -1161,3 +1170,186 @@ def test_each_view_is_audited(admin_user, super_admin, pending_payout):
     _view(super_admin, pending_payout)
 
     assert list(_view_events().values_list('actor_id', flat=True)) == [admin_user.pk, super_admin.pk]
+
+
+# --- J. cancel_payout ---------------------------------------------------------
+
+REASON = 'Created with the wrong amount'
+
+
+def _cancel(admin, payout, reason=REASON, key=None):
+    return cancel_payout(
+        admin=admin, payout_id=payout.pk, cancellation_reason=reason,
+        idempotency_key=key or next_key(),
+    )
+
+
+def _cancelled_ledger(order=None):
+    return _ledger(LedgerEntry.Action.PAYOUT_CANCELLED, order)
+
+
+# J1. partial payouts
+
+def test_partial_payouts_settle_order_exactly(admin_user, active_order):
+    amounts = [Decimal('100'), Decimal('100'), Decimal('50'), Decimal('15')]
+    payouts = [_pay(admin_user, active_order, amount) for amount in amounts]
+    with pytest.raises(PayoutExceedsRemaining):
+        _pay(admin_user, active_order, Decimal('1'))
+
+    for i, payout in enumerate(payouts, start=1):
+        _mark(admin_user, payout, utr=f'{i:012d}')
+
+    active_order.refresh_from_db()
+    assert active_order.payouts.count() == 4
+    assert active_order.payout_paid_total == active_order.payout_target == Decimal('265')
+    assert active_order.status == Order.Status.COMPLETED
+
+
+# J2. successful cancellation
+
+def test_cancel_pending_payout_releases_committed_amount(admin_user, active_order):
+    kept = _pay(admin_user, active_order, Decimal('100'))
+    wrong = _pay(admin_user, active_order, Decimal('150'))
+    _mark(admin_user, kept)
+
+    payout = _cancel(admin_user, wrong)
+
+    payout.refresh_from_db()
+    assert payout.status == Payout.Status.CANCELLED
+    assert payout.note == REASON
+    assert payout.utr == '' and payout.paid_by is None and payout.paid_at is None
+    active_order.refresh_from_db()
+    assert active_order.payout_committed_total == Decimal('100')
+    assert active_order.payout_paid_total == Decimal('100')
+    assert active_order.status == Order.Status.PAYOUT_IN_PROGRESS
+    assert active_order.completed_at is None
+    assert Payout.objects.get(pk=kept.pk).status == Payout.Status.PAID
+
+
+def test_cancel_writes_one_ledger_entry_with_empty_balances(admin_user, active_order, pending_payout):
+    _cancel(admin_user, pending_payout)
+
+    entry = _cancelled_ledger().get()
+    assert entry.actor == admin_user
+    assert entry.order == active_order
+    assert entry.payout == pending_payout
+    assert entry.amount == Decimal('100')
+    assert entry.balance_before is None and entry.balance_after is None
+    assert entry.reference_id == active_order.reference
+
+
+def test_cancelled_payout_is_frozen(admin_user, pending_payout):
+    payout = _cancel(admin_user, pending_payout)
+
+    payout.note = 'edited later'
+    with pytest.raises(ImmutableFieldError):
+        payout.save()
+
+
+# J3. remaining amount after cancellation
+
+def test_released_amount_can_be_committed_again(admin_user, active_order):
+    _pay(admin_user, active_order, Decimal('200'))
+    wrong = _pay(admin_user, active_order, Decimal('65'))
+    with pytest.raises(PayoutExceedsRemaining):
+        _pay(admin_user, active_order, Decimal('1'))
+
+    _cancel(admin_user, wrong)
+    replacement = _pay(admin_user, active_order, Decimal('65'))
+
+    active_order.refresh_from_db()
+    assert replacement.status == Payout.Status.PENDING
+    assert active_order.payout_committed_total == active_order.payout_target
+
+
+def test_cannot_exceed_target_after_cancellation(admin_user, active_order):
+    _pay(admin_user, active_order, Decimal('200'))
+    wrong = _pay(admin_user, active_order, Decimal('65'))
+    _cancel(admin_user, wrong)
+
+    with pytest.raises(PayoutExceedsRemaining):
+        _pay(admin_user, active_order, Decimal('66'))
+
+    active_order.refresh_from_db()
+    assert active_order.payout_committed_total == Decimal('200')
+
+
+def test_cancelled_payout_cannot_be_marked_paid(admin_user, active_order, pending_payout):
+    _cancel(admin_user, pending_payout)
+
+    with pytest.raises(PayoutNotPending):
+        _mark(admin_user, pending_payout)
+
+    active_order.refresh_from_db()
+    assert active_order.payout_paid_total == Decimal('0')
+    assert not _paid_ledger().exists()
+
+
+# J4. PAID payout
+
+def test_cannot_cancel_paid_payout(admin_user, active_order, pending_payout):
+    _mark(admin_user, pending_payout)
+    order_before = Order.objects.values().get(pk=active_order.pk)
+
+    with pytest.raises(PayoutNotCancellable):
+        _cancel(admin_user, pending_payout)
+
+    assert Payout.objects.get(pk=pending_payout.pk).status == Payout.Status.PAID
+    assert Order.objects.values().get(pk=active_order.pk) == order_before
+    assert not _cancelled_ledger().exists()
+
+
+def test_cannot_cancel_payout_of_completed_order(admin_user, active_order):
+    payout = _pay(admin_user, active_order, Decimal('265'))
+    _mark(admin_user, payout)
+
+    with pytest.raises(PayoutNotCancellable):
+        _cancel(admin_user, payout)
+
+    active_order.refresh_from_db()
+    assert active_order.status == Order.Status.COMPLETED
+    assert active_order.payout_committed_total == Decimal('265')
+
+
+# J5. idempotency
+
+def test_cancel_replay_with_same_reason_returns_payout(admin_user, super_admin, active_order, pending_payout):
+    first = _cancel(admin_user, pending_payout, key='cancel-1')
+    order_before = Order.objects.values().get(pk=active_order.pk)
+
+    again = _cancel(admin_user, pending_payout, key='cancel-1')
+    other_admin = _cancel(super_admin, pending_payout)
+
+    assert again.pk == other_admin.pk == first.pk
+    assert Order.objects.values().get(pk=active_order.pk) == order_before
+    assert Order.objects.get(pk=active_order.pk).payout_committed_total == Decimal('0')
+    assert _cancelled_ledger().count() == 1
+
+
+def test_cancelled_payout_cannot_be_cancelled_with_different_reason(admin_user, active_order, pending_payout):
+    _cancel(admin_user, pending_payout)
+
+    with pytest.raises(PayoutAlreadyCancelled):
+        _cancel(admin_user, pending_payout, reason='Another reason')
+
+    assert Payout.objects.get(pk=pending_payout.pk).note == REASON
+    assert Order.objects.get(pk=active_order.pk).payout_committed_total == Decimal('0')
+    assert _cancelled_ledger().count() == 1
+
+
+# J6. input
+
+@pytest.mark.parametrize('reason', ['', '   ', 'x' * 501, None])
+def test_cancellation_reason_required(admin_user, active_order, pending_payout, reason):
+    with pytest.raises(InvalidCancellationReason):
+        _cancel(admin_user, pending_payout, reason=reason)
+
+    assert Payout.objects.get(pk=pending_payout.pk).status == Payout.Status.PENDING
+    assert Order.objects.get(pk=active_order.pk).payout_committed_total == Decimal('100')
+    assert not _cancelled_ledger().exists()
+
+
+def test_member_cannot_cancel(member, pending_payout):
+    with pytest.raises(PayoutPermissionDenied):
+        _cancel(member, pending_payout)
+    assert Payout.objects.get(pk=pending_payout.pk).status == Payout.Status.PENDING

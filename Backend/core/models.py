@@ -1,13 +1,36 @@
+import secrets
+
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import RegexValidator
 from django.db import models
+from django.db.models import F, Q
 from django.utils import timezone
+
+from audit.mixins import ImmutableFieldsMixin
 
 mobile_number_validator = RegexValidator(
     regex=r'^[6-9]\d{9}$',
     message='Enter a valid 10-digit mobile number.',
 )
+
+# Referral codes: 8 characters, uppercase letters and digits without the
+# easily confused I, O, 0 and 1. ~1.1e12 combinations, generated with
+# `secrets` so codes cannot be guessed from one another.
+REFERRAL_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+REFERRAL_CODE_LENGTH = 8
+REFERRAL_CODE_PATTERN = r'^[A-HJ-NP-Z2-9]{8}$'
+
+
+def generate_referral_code(is_taken):
+    """
+    Return a fresh random referral code for which is_taken(code) is False.
+    The unique constraint on User.referral_code remains the final guard.
+    """
+    while True:
+        code = ''.join(secrets.choice(REFERRAL_CODE_ALPHABET) for _ in range(REFERRAL_CODE_LENGTH))
+        if not is_taken(code):
+            return code
 
 
 class UserManager(BaseUserManager):
@@ -51,11 +74,16 @@ class UserManager(BaseUserManager):
         return self._create_user(mobile_number, name, password, **extra_fields)
 
 
-class User(AbstractBaseUser, PermissionsMixin):
+class User(ImmutableFieldsMixin, AbstractBaseUser, PermissionsMixin):
     class Role(models.TextChoices):
         MEMBER = 'MEMBER', 'Member'
         ADMIN = 'ADMIN', 'Admin'
         SUPER_ADMIN = 'SUPER_ADMIN', 'Super Admin'
+
+    # The referrer is assigned once, at registration, and never changes -
+    # including from empty to set. Because a new user has no descendants,
+    # assigning at creation only can never close a referral cycle.
+    immutable_fields = ('referrer', 'referral_code')
 
     name = models.CharField(max_length=150)
     mobile_number = models.CharField(
@@ -78,10 +106,45 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     date_joined = models.DateTimeField(default=timezone.now)
 
+    referral_code = models.CharField(
+        max_length=REFERRAL_CODE_LENGTH,
+        unique=True,
+        editable=False,
+        help_text='Generated on creation; shared in invite links.',
+    )
+    referrer = models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name='direct_referrals',
+        help_text='Direct referrer, fixed at registration. Empty if none.',
+    )
+
     objects = UserManager()
 
     USERNAME_FIELD = 'mobile_number'
     REQUIRED_FIELDS = ['name']
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(referral_code__regex=REFERRAL_CODE_PATTERN),
+                name='core_user_referral_code_format',
+            ),
+            models.CheckConstraint(
+                condition=~Q(referrer=F('id')),
+                name='core_user_not_self_referred',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self._state.adding and not self.referral_code:
+            self.referral_code = generate_referral_code(
+                lambda code: type(self)._base_manager.filter(referral_code=code).exists()
+            )
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.mobile_number

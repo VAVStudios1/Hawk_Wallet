@@ -21,6 +21,13 @@ class MarkPayoutPaidSerializer(serializers.Serializer):
     idempotency_key = serializers.CharField(allow_blank=True, trim_whitespace=False)
 
 
+class CancelPayoutSerializer(serializers.Serializer):
+    """Input for cancel_payout; the service validates the reason and key."""
+
+    cancellation_reason = serializers.CharField(allow_blank=True, trim_whitespace=False)
+    idempotency_key = serializers.CharField(allow_blank=True, trim_whitespace=False)
+
+
 class PayoutSerializer(serializers.ModelSerializer):
     """
     A payout and its order's state. The destination (UPI ID, QR) is left

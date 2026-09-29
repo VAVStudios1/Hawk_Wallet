@@ -53,3 +53,65 @@ class PayoutMethodUnavailable(ClaimError):
 class ClaimConflict(ClaimError):
     code = 'conflict'
     default_message = 'The claim could not be completed. Please try again.'
+
+
+class OrderReadError(Exception):
+    """Base for member order/offer read errors. `code` is stable for API mapping."""
+
+    code = 'order_error'
+    default_message = 'Orders could not be loaded.'
+
+    def __init__(self, message=None):
+        super().__init__(message or self.default_message)
+
+
+class OrderReadPermissionDenied(OrderReadError):
+    code = 'permission_denied'
+    default_message = 'Only verified members can view orders.'
+
+
+class AdminOrderReadPermissionDenied(OrderReadError):
+    code = 'permission_denied'
+    default_message = 'Only active admins can view all orders.'
+
+
+class OrderNotFound(OrderReadError):
+    # Covers unknown ids and other users' orders alike, so the existence of
+    # someone else's order is never revealed.
+    code = 'order_not_found'
+    default_message = 'Order not found.'
+
+
+class OfferCreateError(Exception):
+    """Base for admin offer-creation errors. `code` is stable for API mapping."""
+
+    code = 'offer_error'
+    default_message = 'The offer could not be created.'
+
+    def __init__(self, message=None):
+        super().__init__(message or self.default_message)
+
+
+class OfferCreatePermissionDenied(OfferCreateError):
+    code = 'permission_denied'
+    default_message = 'Only active admins can create offers.'
+
+
+class InvalidOfferIdempotencyKey(OfferCreateError):
+    code = 'invalid_idempotency_key'
+    default_message = 'A valid idempotency key (1-64 characters) is required.'
+
+
+class OfferIdempotencyKeyConflict(OfferCreateError):
+    code = 'idempotency_key_conflict'
+    default_message = 'This idempotency key was already used for a different offer.'
+
+
+class InvalidOffer(OfferCreateError):
+    code = 'invalid_offer'
+    default_message = 'The offer details are invalid.'
+
+
+class OfferCreateConflict(OfferCreateError):
+    code = 'conflict'
+    default_message = 'The offer could not be created. Please try again.'

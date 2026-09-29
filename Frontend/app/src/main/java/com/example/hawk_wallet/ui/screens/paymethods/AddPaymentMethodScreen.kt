@@ -50,7 +50,7 @@ private fun AddPaymentMethodContent(
 ) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { HawkBackTopBar(title = "Add Payment Method", onBackClick = onBackClick) },
+        topBar = { HawkBackTopBar(title = "Add SELL Account", onBackClick = onBackClick) },
         bottomBar = {
             Button(
                 onClick = onContinue,
@@ -74,15 +74,24 @@ private fun AddPaymentMethodContent(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
+                SellSectionHeader(
+                    title = "Where should we send your money?",
+                    description = "This account receives money from Hawk Wallet: the payouts for orders " +
+                        "you claim. It is never used to pay for an order - you pay on the order's Pay-In screen.",
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+            }
+            item {
                 Text(
-                    text = "Choose your payment provider",
+                    text = "Choose your business account",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
             }
-            items(PaymentProviderOption.entries, key = { it.code }) { provider ->
+            // BUSINESS / SELL providers only; personal UPI apps are BUY methods.
+            items(PaymentProviderOption.business, key = { it.code }) { provider ->
                 PaymentProviderCard(
                     provider = provider,
                     selected = provider == selected,
@@ -98,7 +107,7 @@ private fun AddPaymentMethodContent(
 private fun AddPaymentMethodPreview() {
     Hawk_WalletTheme {
         AddPaymentMethodContent(
-            selected = PaymentProviderOption.PHONEPE,
+            selected = PaymentProviderOption.PHONEPE_BUSINESS,
             onSelect = {},
             onBackClick = {},
             onContinue = {}

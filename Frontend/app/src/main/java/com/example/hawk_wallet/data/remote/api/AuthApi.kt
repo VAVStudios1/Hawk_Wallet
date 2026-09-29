@@ -3,6 +3,7 @@ package com.example.hawk_wallet.data.remote.api
 import com.example.hawk_wallet.data.remote.model.ApiResponse
 import com.example.hawk_wallet.data.remote.model.LoginData
 import com.example.hawk_wallet.data.remote.model.LoginRequest
+import com.example.hawk_wallet.data.remote.model.LogoutRequest
 import com.example.hawk_wallet.data.remote.model.RegisterData
 import com.example.hawk_wallet.data.remote.model.RegisterRequest
 import com.example.hawk_wallet.data.remote.model.ResendOtpRequest
@@ -27,4 +28,8 @@ interface AuthApi {
 
     @POST("api/auth/verify-login-otp/")
     suspend fun verifyLoginOtp(@Body request: VerifyOtpRequest): Response<ApiResponse<VerifyLoginOtpData>>
+
+    /** Blacklists this device's refresh token; sent with the current access token. */
+    @POST("api/auth/logout/")
+    suspend fun logout(@Body request: LogoutRequest): Response<ApiResponse<Map<String, Any?>>>
 }
