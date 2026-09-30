@@ -64,6 +64,16 @@ fun OrdersScreen(
     OrdersContent(
         uiState = uiState,
         onRefresh = viewModel::refresh,
+        onRefreshOffers = viewModel::refreshOffers,
+        filterActions = OfferAmountFilterActions(
+            onPresetSelect = viewModel::selectQuickRange,
+            onCustomClick = viewModel::openCustomFilter,
+            onCustomMinChange = viewModel::onCustomMinChange,
+            onCustomMaxChange = viewModel::onCustomMaxChange,
+            onCustomDismiss = viewModel::dismissCustomFilter,
+            onCustomApply = viewModel::applyCustomFilter,
+            onShowAll = viewModel::clearFilter
+        ),
         onBackClick = onBackClick,
         onOfferClick = onOfferClick,
         onOrderClick = onOrderClick,
@@ -76,12 +86,16 @@ fun OrdersScreen(
 private fun OrdersContent(
     uiState: OrdersUiState,
     onRefresh: () -> Unit,
+    onRefreshOffers: () -> Unit,
+    filterActions: OfferAmountFilterActions,
     onBackClick: () -> Unit,
     onOfferClick: (OfferUiModel) -> Unit,
     onOrderClick: (Long) -> Unit,
     onBottomNavSelect: (HawkNavDestination) -> Unit
 ) {
     var tab by rememberSaveable { mutableIntStateOf(TAB_AVAILABLE) }
+
+    uiState.customAmount?.let { CustomAmountDialog(input = it, actions = filterActions) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -98,21 +112,35 @@ private fun OrdersContent(
                 Tab(selected = tab == TAB_MY_ORDERS, onClick = { tab = TAB_MY_ORDERS }, text = { Text("My Orders") })
             }
 
-            val firstLoad = uiState.isLoading && !uiState.loaded
+            val available = tab == TAB_AVAILABLE
+            if (available) {
+                OfferAmountFilterBar(filter = uiState.amountFilter, actions = filterActions)
+            }
+
+            // Each tab shows only its own list's loading, so a filter change never spins My Orders.
+            val loading = if (available) uiState.offersLoading else uiState.ordersLoading
+            val loaded = if (available) uiState.offersLoaded else uiState.ordersLoaded
+            val filtered = !uiState.amountFilter.isAll
             PullToRefreshBox(
-                isRefreshing = uiState.isLoading && uiState.loaded,
+                isRefreshing = loading && loaded,
                 onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize()
             ) {
                 when {
-                    firstLoad -> CenteredLoading()
-                    tab == TAB_AVAILABLE -> ListOrMessage(
+                    loading && !loaded -> CenteredLoading()
+                    available -> ListOrMessage(
                         error = uiState.offersError,
                         isEmpty = uiState.offers.isEmpty(),
-                        emptyTitle = "No orders available right now",
-                        emptyMessage = "New orders appear here as soon as they are published. Pull down to refresh.",
+                        emptyTitle = if (filtered) "No offers in this range" else "No orders available right now",
+                        emptyMessage = if (filtered) {
+                            "Try another amount range or show all offers."
+                        } else {
+                            "New orders appear here as soon as they are published. Pull down to refresh."
+                        },
                         errorTitle = "Couldn't load available orders",
-                        onRetry = onRefresh
+                        onRetry = onRefreshOffers,
+                        emptyActionLabel = if (filtered) "Show All" else null,
+                        onEmptyAction = filterActions.onShowAll
                     ) {
                         items(uiState.offers, key = { it.id }) { offer ->
                             OfferCard(offer = offer, onClick = { onOfferClick(offer) })
@@ -145,6 +173,8 @@ private fun ListOrMessage(
     emptyMessage: String,
     errorTitle: String,
     onRetry: () -> Unit,
+    emptyActionLabel: String? = null,
+    onEmptyAction: () -> Unit = {},
     items: LazyListScope.() -> Unit
 ) {
     LazyColumn(
@@ -163,7 +193,13 @@ private fun ListOrMessage(
                 )
             }
             isEmpty -> item {
-                CenteredMessage(title = emptyTitle, message = emptyMessage, modifier = Modifier.padding(top = 96.dp))
+                CenteredMessage(
+                    title = emptyTitle,
+                    message = emptyMessage,
+                    actionLabel = emptyActionLabel,
+                    onAction = onEmptyAction,
+                    modifier = Modifier.padding(top = 96.dp)
+                )
             }
             else -> {
                 if (error != null) {
@@ -257,9 +293,12 @@ private fun OrdersPreview() {
                         "2026-09-26T10:00:00Z", null, null, null
                     )
                 ),
-                loaded = true
+                offersLoaded = true,
+                ordersLoaded = true
             ),
             onRefresh = {},
+            onRefreshOffers = {},
+            filterActions = OfferAmountFilterActions({}, {}, {}, {}, {}, {}, {}),
             onBackClick = {},
             onOfferClick = {},
             onOrderClick = {},

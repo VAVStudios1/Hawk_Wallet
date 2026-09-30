@@ -11,6 +11,7 @@ runs under it, so two requests with the same key cannot both create an
 Order. The (user, idempotency_key) unique constraint remains the final
 guard (e.g. on SQLite, where row locks are a no-op).
 """
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -31,6 +32,7 @@ from orders.exceptions import (
     IdempotencyKeyConflict,
     InvalidIdempotencyKey,
     InvalidOffer,
+    InvalidOfferFilter,
     InvalidOfferIdempotencyKey,
     NoActivePayoutMethod,
     OfferCreateConflict,
@@ -351,17 +353,41 @@ def claimable_offers_filter(now):
     )
 
 
-def list_claimable_offers(*, user):
+def list_claimable_offers(*, user, min_amount=None, max_amount=None):
     """
     Return OfferPreviews for the offers `user` can claim right now, smallest
     order amount first (id breaks ties). Read-only. Whether the member has a
     payout method is checked at claim time, not here.
+
+    min_amount / max_amount are the raw query-string values (None when
+    absent) and narrow the list by order_amount, inclusively. They only
+    ever narrow claimable_offers_filter, never widen it.
     """
     _require_reader(user)
-    offers = OrderOffer.objects.filter(claimable_offers_filter(timezone.now())).order_by(
-        'order_amount', 'id'
-    )
-    return [_preview(offer) for offer in offers]
+    low = _parse_amount_bound('min_amount', min_amount)
+    high = _parse_amount_bound('max_amount', max_amount)
+    if low is not None and high is not None and low > high:
+        raise InvalidOfferFilter('min_amount must not be greater than max_amount.')
+
+    offers = OrderOffer.objects.filter(claimable_offers_filter(timezone.now()))
+    if low is not None:
+        offers = offers.filter(order_amount__gte=low)
+    if high is not None:
+        offers = offers.filter(order_amount__lte=high)
+    return [_preview(offer) for offer in offers.order_by('order_amount', 'id')]
+
+
+# Whole rupees, at most the 10 integer digits order_amount can hold. ASCII
+# digits only: no sign, decimal point, whitespace or non-Latin numerals.
+_AMOUNT_BOUND = re.compile(r'[0-9]{1,10}', re.ASCII)
+
+
+def _parse_amount_bound(name, value):
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _AMOUNT_BOUND.fullmatch(value):
+        raise InvalidOfferFilter(f'{name} must be whole rupees (0-9999999999).')
+    return Decimal(value)
 
 
 def list_member_orders(*, user):

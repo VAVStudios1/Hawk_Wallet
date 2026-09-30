@@ -177,6 +177,146 @@ def test_offers_empty_list(member):
     assert response.data['data'] == {'offers': []}
 
 
+# --- available offers: order_amount filter --------------------------------------
+
+FILTER_AMOUNTS = ['0.00', '1.00', '999.00', '1000.00', '4999.00', '5000.00',
+                  '7999.00', '8000.00', '9999.00', '10000.00', '25000.00']
+
+
+@pytest.fixture
+def amount_offers(member):
+    """One claimable offer per FILTER_AMOUNTS entry except 0 (amounts are positive)."""
+    return {
+        amount: _make_offer(order_amount=Decimal(amount))
+        for amount in FILTER_AMOUNTS if amount != '0.00'
+    }
+
+
+def _filtered_amounts(member, query):
+    response = _client(member).get(OFFERS_URL, query)
+    assert response.status_code == 200, response.data
+    return [offer['order_amount'] for offer in response.data['data']['offers']]
+
+
+def test_offer_filter_absent_returns_all_in_existing_order(member, amount_offers):
+    response = _client(member).get(OFFERS_URL)
+
+    assert response.status_code == 200
+    assert set(response.data['data']) == {'offers'}
+    assert [o['order_amount'] for o in response.data['data']['offers']] == [
+        '1.00', '999.00', '1000.00', '4999.00', '5000.00', '7999.00',
+        '8000.00', '9999.00', '10000.00', '25000.00',
+    ]
+
+
+@pytest.mark.parametrize(
+    'query, expected',
+    [
+        # min only; the exact lower bound is included.
+        ({'min_amount': '8000'}, ['8000.00', '9999.00', '10000.00', '25000.00']),
+        # max only; the exact upper bound is included.
+        ({'max_amount': '999'}, ['1.00', '999.00']),
+        # both, both bounds inclusive.
+        ({'min_amount': '5000', 'max_amount': '7999'}, ['5000.00', '7999.00']),
+        # Android presets.
+        ({'min_amount': '0', 'max_amount': '999'}, ['1.00', '999.00']),
+        ({'min_amount': '1000', 'max_amount': '2999'}, ['1000.00']),
+        ({'min_amount': '3000', 'max_amount': '4999'}, ['4999.00']),
+        ({'min_amount': '8000', 'max_amount': '9999'}, ['8000.00', '9999.00']),
+        ({'min_amount': '10000'}, ['10000.00', '25000.00']),
+        # min == max is a single-amount range; leading zeros are plain digits.
+        ({'min_amount': '5000', 'max_amount': '5000'}, ['5000.00']),
+        ({'min_amount': '0005000', 'max_amount': '5000'}, ['5000.00']),
+        # Valid range with nothing in it: empty list, not an error.
+        ({'min_amount': '2000', 'max_amount': '2999'}, []),
+        # The largest allowed value.
+        ({'max_amount': '9999999999'}, ['1.00', '999.00', '1000.00', '4999.00', '5000.00',
+                                        '7999.00', '8000.00', '9999.00', '10000.00', '25000.00']),
+    ],
+)
+def test_offer_filter_by_order_amount_inclusive(member, amount_offers, query, expected):
+    assert _filtered_amounts(member, query) == expected
+
+
+def test_offer_filter_keeps_response_shape(member, amount_offers):
+    response = _client(member).get(OFFERS_URL, {'min_amount': '5000', 'max_amount': '5000'})
+
+    offer = response.data['data']['offers'][0]
+    assert set(response.data['data']) == {'offers'}
+    # income_amount / payout_target still come from the server, unfiltered on.
+    assert offer['id'] == amount_offers['5000.00'].pk
+    assert set(offer) == {
+        'id', 'currency', 'order_amount', 'income_rate',
+        'income_amount', 'payout_target', 'valid_to',
+    }
+
+
+def test_offer_filter_is_on_order_amount_not_payout_target(member):
+    # 9800 @ 4% -> income 392, target 10192: "You pay" is below 10000.
+    offer = _make_offer(order_amount=Decimal('9800.00'), income_rate=Decimal('4.00'))
+    client = _client(member)
+
+    assert _offer_ids(client.get(OFFERS_URL, {'min_amount': '10000'})) == []
+    assert _offer_ids(client.get(OFFERS_URL, {'min_amount': '8000', 'max_amount': '9999'})) == [offer.pk]
+
+
+@pytest.mark.parametrize(
+    'query',
+    [
+        {'min_amount': '8000', 'max_amount': '7999'},  # min > max
+        {'min_amount': 'abc'},                          # non-numeric
+        {'max_amount': '5k'},
+        {'min_amount': '-1'},                           # negative
+        {'max_amount': '-5000'},
+        {'min_amount': '5000.00'},                      # decimal
+        {'max_amount': '999.5'},
+        {'min_amount': '1e3'},
+        {'min_amount': '10000000000'},                  # 11 digits: too large
+        {'max_amount': '99999999999999999999'},
+        {'min_amount': ''},                             # blank
+        {'max_amount': ' 500'},                         # whitespace
+        {'min_amount': '+500'},                         # sign
+        {'min_amount': '５００'},                        # non-ASCII digits
+    ],
+)
+def test_offer_filter_invalid_values_rejected(member, amount_offers, query):
+    response = _client(member).get(OFFERS_URL, query)
+
+    assert response.status_code == 400
+    assert response.data['success'] is False
+    assert response.data['errors'] == {'code': 'invalid_amount_filter'}
+    assert 'data' not in response.data
+
+
+def test_offer_filter_does_not_expose_unclaimable_offers(member):
+    now = timezone.now()
+    claimable = _make_offer(order_amount=Decimal('6000.00'))
+    _make_offer(order_amount=Decimal('6000.00'), is_active=False)
+    _make_offer(order_amount=Decimal('6000.00'), valid_to=now - timedelta(seconds=1))
+    _make_offer(order_amount=Decimal('6000.00'), valid_from=now + timedelta(hours=1))
+    _make_offer(order_amount=Decimal('6000.00'), quantity_available=0)
+
+    response = _client(member).get(OFFERS_URL, {'min_amount': '5000', 'max_amount': '7999'})
+
+    assert _offer_ids(response) == [claimable.pk]
+
+
+def test_offer_filter_still_member_only(make_user):
+    response = _client(make_user(role=User.Role.ADMIN)).get(OFFERS_URL, {'min_amount': '0'})
+    assert response.status_code == 403
+
+
+def test_offer_filter_does_not_affect_my_orders(member):
+    client = _client(member)
+    order = _claim(client, _make_offer(order_amount=Decimal('255.00')))
+
+    # /api/orders/ ignores the offer filter params, valid or not.
+    for query in ({'min_amount': '10000'}, {'max_amount': '1'}, {'min_amount': 'abc'}):
+        response = client.get(ORDERS_URL, query)
+        assert response.status_code == 200, response.data
+        assert [o['id'] for o in response.data['data']['orders']] == [order['id']]
+
+
 # --- own orders ---------------------------------------------------------------
 
 def test_orders_lists_only_own_orders_newest_first(member, make_user, make_order):

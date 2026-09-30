@@ -324,9 +324,12 @@ fun HawkNavHost(
                 viewModel = viewModel,
                 supportUnreadCount = supportUnreadCount,
                 actions = HomeActions(
+                    // USDT and Task have no screen yet, so they stay inert.
                     onQuickActionClick = { action ->
-                        if (action == QuickAction.ORDER) {
-                            navController.navigate(HawkRoutes.ORDERS) { launchSingleTop = true }
+                        when (action) {
+                            QuickAction.ORDER -> navController.navigate(HawkRoutes.ORDERS) { launchSingleTop = true }
+                            QuickAction.TEAM -> openTeam()
+                            else -> Unit
                         }
                     },
                     onInviteClick = openTeam,
@@ -364,7 +367,17 @@ fun HawkNavHost(
                 },
                 // BUY by default; the claim flow opens it on SELL (see CHOOSE_PAYOUT_METHOD).
                 initialTab = backStackEntry.savedStateHandle.get<Int>(HawkRoutes.WALLET_TAB_KEY)
-                    ?: PAYMENT_METHODS_TAB_BUY
+                    ?: PAYMENT_METHODS_TAB_BUY,
+                // Wallet's own tabs: back to Home, or across to Orders / Team / Profile.
+                onBottomNavSelect = { destination ->
+                    when (destination) {
+                        HawkNavDestination.HOME -> navController.popBackStack(HawkRoutes.HOME, inclusive = false)
+                        HawkNavDestination.ORDERS -> openOrders()
+                        HawkNavDestination.TEAM -> openTeam()
+                        HawkNavDestination.PROFILE -> openProfile()
+                        else -> Unit
+                    }
+                }
             )
         }
 

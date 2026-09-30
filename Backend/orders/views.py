@@ -1,4 +1,5 @@
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
 
 from core.api import ServiceAPIView, client_ip
@@ -12,6 +13,7 @@ from orders.exceptions import (
     IdempotencyKeyConflict,
     InvalidIdempotencyKey,
     InvalidOffer,
+    InvalidOfferFilter,
     InvalidOfferIdempotencyKey,
     NoActivePayoutMethod,
     OfferCreateConflict,
@@ -91,6 +93,7 @@ READ_ERROR_STATUS = {
     OrderReadPermissionDenied: status.HTTP_403_FORBIDDEN,
     # Also raised for another member's order: same 404 either way.
     OrderNotFound: status.HTTP_404_NOT_FOUND,
+    InvalidOfferFilter: status.HTTP_400_BAD_REQUEST,
 }
 
 
@@ -102,10 +105,34 @@ class MemberOrderReadAPIView(ServiceAPIView):
     error_status = READ_ERROR_STATUS
 
 
+OFFER_AMOUNT_FILTER_PARAMETERS = [
+    OpenApiParameter(
+        name,
+        OpenApiTypes.STR,
+        OpenApiParameter.QUERY,
+        required=False,
+        pattern=r'^[0-9]{1,10}$',
+        description=(
+            f'Optional. Only offers with order_amount {op} this value (inclusive). '
+            'Whole rupees: ASCII digits only, 0-9999999999; no sign, decimals or '
+            'blank value (400 otherwise, and when min_amount > max_amount).'
+        ),
+    )
+    for name, op in (('min_amount', '>='), ('max_amount', '<='))
+]
+
+
 class ClaimableOffersView(MemberOrderReadAPIView):
-    @extend_schema(responses={200: OfferPreviewSerializer(many=True)})
+    @extend_schema(
+        parameters=OFFER_AMOUNT_FILTER_PARAMETERS,
+        responses={200: OfferPreviewSerializer(many=True)},
+    )
     def get(self, request):
-        offers = list_claimable_offers(user=request.user)
+        offers = list_claimable_offers(
+            user=request.user,
+            min_amount=request.query_params.get('min_amount'),
+            max_amount=request.query_params.get('max_amount'),
+        )
         return success_response(
             'Available offers.',
             data={'offers': OfferPreviewSerializer(offers, many=True).data},

@@ -48,6 +48,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.hawk_wallet.ui.components.AuthErrorBanner
 import com.example.hawk_wallet.ui.components.HawkBackTopBar
+import com.example.hawk_wallet.ui.components.HawkBottomNavigation
+import com.example.hawk_wallet.ui.components.HawkNavDestination
 import com.example.hawk_wallet.ui.components.PaymentMethodCard
 import com.example.hawk_wallet.ui.model.PaymentMethodUiModel
 import com.example.hawk_wallet.ui.model.PaymentProviderOption
@@ -74,7 +76,8 @@ fun PaymentMethodsScreen(
     onBackClick: () -> Unit,
     onAddSellClick: () -> Unit,
     onAddBuyClick: () -> Unit,
-    initialTab: Int = PAYMENT_METHODS_TAB_BUY
+    initialTab: Int = PAYMENT_METHODS_TAB_BUY,
+    onBottomNavSelect: (HawkNavDestination) -> Unit = {}
 ) {
     val sellState by sellViewModel.uiState.collectAsState()
     val buyState by buyViewModel.uiState.collectAsState()
@@ -105,6 +108,7 @@ fun PaymentMethodsScreen(
         buyState = buyState,
         snackbarHostState = snackbarHostState,
         onBackClick = onBackClick,
+        onBottomNavSelect = onBottomNavSelect,
         sellActions = MethodListActions(
             onAdd = onAddSellClick,
             onRetry = sellViewModel::refresh,
@@ -136,7 +140,8 @@ private fun PaymentMethodsContent(
     snackbarHostState: SnackbarHostState,
     onBackClick: () -> Unit,
     sellActions: MethodListActions,
-    buyActions: MethodListActions
+    buyActions: MethodListActions,
+    onBottomNavSelect: (HawkNavDestination) -> Unit = {}
 ) {
     // Survives recomposition, rotation and returning from an add screen.
     var tab by rememberSaveable { mutableIntStateOf(initialTab) }
@@ -144,6 +149,7 @@ private fun PaymentMethodsContent(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = { HawkBackTopBar(title = "Payment Methods", onBackClick = onBackClick) },
+        bottomBar = { HawkBottomNavigation(selected = HawkNavDestination.WALLET, onSelect = onBottomNavSelect) },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         Column(

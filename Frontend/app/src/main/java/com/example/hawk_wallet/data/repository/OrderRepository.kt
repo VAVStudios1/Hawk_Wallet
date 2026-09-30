@@ -14,8 +14,12 @@ import com.example.hawk_wallet.data.remote.model.SubmitPayInRequest
  */
 class OrderRepository(private val api: OrderApi) {
 
-    suspend fun offers(): ApiResult<List<OfferDto>> =
-        when (val result = safeApiCall { api.offers() }) {
+    /**
+     * The backend filters by order_amount; [minAmount] / [maxAmount] are whole-rupee
+     * digit strings passed through untouched, and null leaves that bound off.
+     */
+    suspend fun offers(minAmount: String? = null, maxAmount: String? = null): ApiResult<List<OfferDto>> =
+        when (val result = safeApiCall { api.offers(minAmount, maxAmount) }) {
             is ApiResult.Success -> ApiResult.Success(result.data.offers, result.message)
             is ApiResult.Error -> result
         }

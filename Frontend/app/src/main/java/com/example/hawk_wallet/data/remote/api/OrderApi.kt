@@ -13,11 +13,19 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 /** Member offers, orders and pay-ins; authenticated by the shared JWT interceptor. */
 interface OrderApi {
+    /**
+     * Claimable offers, optionally narrowed by order_amount ("You pay"),
+     * inclusive, in whole rupees. Retrofit omits a null bound entirely.
+     */
     @GET("api/orders/offers/")
-    suspend fun offers(): Response<ApiResponse<OfferListData>>
+    suspend fun offers(
+        @Query("min_amount") minAmount: String?,
+        @Query("max_amount") maxAmount: String?
+    ): Response<ApiResponse<OfferListData>>
 
     @GET("api/orders/")
     suspend fun orders(): Response<ApiResponse<OrderListData>>
