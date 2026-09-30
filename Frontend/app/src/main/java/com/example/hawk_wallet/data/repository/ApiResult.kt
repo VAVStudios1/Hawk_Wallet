@@ -14,7 +14,11 @@ sealed class ApiResult<out T> {
         val message: String,
         val fieldErrors: Map<String, List<String>> = emptyMap(),
         val statusCode: Int? = null
-    ) : ApiResult<Nothing>()
+    ) : ApiResult<Nothing>() {
+        /** The backend's stable machine-readable `errors.code`, when it sent one. */
+        val errorCode: String?
+            get() = fieldErrors["code"]?.firstOrNull()
+    }
 }
 
 /**

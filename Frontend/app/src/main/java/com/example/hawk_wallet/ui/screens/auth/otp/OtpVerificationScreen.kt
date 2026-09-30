@@ -35,16 +35,12 @@ import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
 @Composable
 fun OtpVerificationScreen(
     viewModel: OtpViewModel,
-    onRegistrationVerified: () -> Unit,
-    onLoginVerified: (role: String) -> Unit
+    onRegistrationVerified: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
     LaunchedEffect(uiState.registrationVerified) {
         if (uiState.registrationVerified) onRegistrationVerified()
-    }
-    LaunchedEffect(uiState.loggedInRole) {
-        uiState.loggedInRole?.let(onLoginVerified)
     }
 
     OtpVerificationScreenContent(
@@ -68,12 +64,15 @@ private fun formatCooldown(totalSeconds: Int): String {
     return "%02d:%02d".format(minutes, seconds)
 }
 
+/** Shared by registration and password-reset OTP entry; [subtitle] defaults to the registration copy. */
 @Composable
-private fun OtpVerificationScreenContent(
+internal fun OtpVerificationScreenContent(
     uiState: OtpUiState,
     onOtpChange: (String) -> Unit,
     onVerifyClick: () -> Unit,
-    onResendClick: () -> Unit
+    onResendClick: () -> Unit,
+    subtitle: String = "We have sent a 6-digit code to ${uiState.mobileNumber}",
+    extraContent: @Composable () -> Unit = {}
 ) {
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
         Column(
@@ -96,7 +95,7 @@ private fun OtpVerificationScreenContent(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "We have sent a 6-digit code to ${uiState.mobileNumber}",
+                text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -163,6 +162,7 @@ private fun OtpVerificationScreenContent(
             ) {
                 Text(if (uiState.isResending) "Resending..." else "Didn't receive the code? Resend OTP")
             }
+            extraContent()
         }
     }
 }

@@ -70,6 +70,7 @@ INSTALLED_APPS = [
     'audit',
     'team',
     'accounts',
+    'support',
 ]
 
 MIDDLEWARE = [
@@ -198,7 +199,11 @@ REST_FRAMEWORK = {
         'anon': '60/min',
         'user': '120/min',
         'otp': '10/min',
+        # Per IP. Per-account failed-login lockout is separate (core/login.py).
+        'login': '10/min',
         'password_change': '5/min',
+        # Chat uploads are decoded and scanned on the server.
+        'support_attachment': '20/min',
     },
 }
 
@@ -209,11 +214,21 @@ SPECTACULAR_SETTINGS = {
 }
 
 
+# Session inactivity: a session ends once the user has not used the app for
+# this long. The refresh token carries the time of the user's last activity
+# and expires this long after it, so the backend enforces the limit on every
+# refresh (core/tokens.py). The access token stays short-lived.
+
+SESSION_IDLE_TIMEOUT = timedelta(hours=int(os.environ.get('SESSION_IDLE_TIMEOUT_HOURS', '12')))
+
+
 # Simple JWT
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=15),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    # A fresh login counts as activity, so its refresh token lasts one idle
+    # window; rotation re-dates it from the last activity (core/tokens.py).
+    'REFRESH_TOKEN_LIFETIME': SESSION_IDLE_TIMEOUT,
     'ROTATE_REFRESH_TOKENS': True,
     # A refresh token is single-use: once rotated it is blacklisted, so a
     # stolen copy stops working as soon as the real client refreshes.
@@ -238,3 +253,24 @@ OTP_LENGTH = int(os.environ.get('OTP_LENGTH', '6'))
 OTP_EXPIRY_MINUTES = int(os.environ.get('OTP_EXPIRY_MINUTES', '5'))
 OTP_MAX_ATTEMPTS = int(os.environ.get('OTP_MAX_ATTEMPTS', '5'))
 OTP_RESEND_COOLDOWN_SECONDS = int(os.environ.get('OTP_RESEND_COOLDOWN_SECONDS', '30'))
+
+# Extra per-account caps on OTP requests, by OTP purpose: (window in
+# seconds, max OTPs created in that window). Together with OTP_MAX_ATTEMPTS
+# this bounds how many guesses anyone gets at one account's reset OTP.
+OTP_REQUEST_LIMITS = {
+    'password_reset': [
+        (60 * 60, int(os.environ.get('PASSWORD_RESET_OTP_PER_HOUR', '5'))),
+        (24 * 60 * 60, int(os.environ.get('PASSWORD_RESET_OTP_PER_DAY', '10'))),
+    ],
+}
+
+# Password reset: the single-use credential issued after the OTP is verified.
+PASSWORD_RESET_TOKEN_EXPIRY_MINUTES = int(os.environ.get('PASSWORD_RESET_TOKEN_EXPIRY_MINUTES', '10'))
+
+
+# Failed-login protection, per account: this many wrong passwords within the
+# window locks the account's password login for LOGIN_LOCKOUT_MINUTES.
+
+LOGIN_MAX_FAILED_ATTEMPTS = int(os.environ.get('LOGIN_MAX_FAILED_ATTEMPTS', '5'))
+LOGIN_FAILURE_WINDOW_MINUTES = int(os.environ.get('LOGIN_FAILURE_WINDOW_MINUTES', '15'))
+LOGIN_LOCKOUT_MINUTES = int(os.environ.get('LOGIN_LOCKOUT_MINUTES', '15'))

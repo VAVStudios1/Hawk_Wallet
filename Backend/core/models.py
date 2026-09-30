@@ -106,6 +106,13 @@ class User(ImmutableFieldsMixin, AbstractBaseUser, PermissionsMixin):
 
     date_joined = models.DateTimeField(default=timezone.now)
 
+    # Failed-login protection (core/login.py). Wrong passwords are counted
+    # per account; too many within the window lock password login until
+    # login_locked_until. A successful login clears all three.
+    failed_login_attempts = models.PositiveSmallIntegerField(default=0)
+    last_failed_login_at = models.DateTimeField(null=True, blank=True)
+    login_locked_until = models.DateTimeField(null=True, blank=True)
+
     referral_code = models.CharField(
         max_length=REFERRAL_CODE_LENGTH,
         unique=True,
@@ -153,7 +160,10 @@ class User(ImmutableFieldsMixin, AbstractBaseUser, PermissionsMixin):
 class OTP(models.Model):
     class Purpose(models.TextChoices):
         REGISTRATION = 'registration', 'Registration'
+        # No longer issued: password login needs no OTP. Kept so existing
+        # rows and the unused verify-login-otp endpoint stay valid.
         LOGIN = 'login', 'Login'
+        PASSWORD_RESET = 'password_reset', 'Password reset'
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='otps')
     purpose = models.CharField(max_length=20, choices=Purpose.choices)
@@ -181,3 +191,43 @@ class OTP(models.Model):
 
     def __str__(self):
         return f'{self.user.mobile_number} - {self.purpose}'
+
+
+class PasswordResetToken(models.Model):
+    """
+    The short-lived, single-use credential a user receives after verifying a
+    password-reset OTP (core/password_reset.py). Only a SHA-256 hash of the
+    raw token is stored. It is tied to one user and the OTP that proved the
+    mobile number, and to the user's password as it was when issued
+    (password_fingerprint), so any password change also voids it.
+
+    A user has at most one live token (neither used nor invalidated); the
+    database enforces that.
+    """
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='password_reset_tokens')
+    otp = models.OneToOneField(OTP, on_delete=models.CASCADE, related_name='password_reset_token')
+    token_hash = models.CharField(max_length=64, unique=True)
+    password_fingerprint = models.CharField(max_length=64)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True, help_text='Set when the password was reset with it.')
+    invalidated_at = models.DateTimeField(
+        null=True, blank=True, help_text='Set when a newer token replaced it.'
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user'],
+                condition=Q(used_at__isnull=True, invalidated_at__isnull=True),
+                name='core_one_live_password_reset_token',
+            ),
+        ]
+
+    def is_expired(self):
+        return timezone.now() >= self.expires_at
+
+    def __str__(self):
+        return f'{self.user.mobile_number} - password reset'

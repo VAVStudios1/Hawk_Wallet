@@ -14,16 +14,22 @@ import com.example.hawk_wallet.data.repository.HomeRepository
 import com.example.hawk_wallet.data.repository.OrderRepository
 import com.example.hawk_wallet.data.repository.PayoutMethodRepository
 import com.example.hawk_wallet.data.repository.ProfileRepository
+import com.example.hawk_wallet.data.repository.SupportAttachmentFiles
+import com.example.hawk_wallet.data.repository.SupportChatRepository
 import com.example.hawk_wallet.data.repository.TeamRepository
 import com.example.hawk_wallet.ui.navigation.HawkApp
 import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
 
 class MainActivity : ComponentActivity() {
+
+    private lateinit var sessionManager: SessionManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val sessionManager = SessionManager(applicationContext)
+        sessionManager = SessionManager(applicationContext)
+        val sessionRefresher = NetworkModule.provideSessionRefresher(sessionManager)
         val authApi = NetworkModule.provideAuthApi(sessionManager)
         val authRepository = AuthRepository(authApi)
         val homeRepository = HomeRepository(NetworkModule.provideHomeApi(sessionManager))
@@ -40,6 +46,10 @@ class MainActivity : ComponentActivity() {
         )
         val teamRepository = TeamRepository(NetworkModule.provideTeamApi(sessionManager))
         val profileRepository = ProfileRepository(NetworkModule.provideProfileApi(sessionManager))
+        val supportChatRepository = SupportChatRepository(
+            NetworkModule.provideSupportChatApi(sessionManager),
+            SupportAttachmentFiles(applicationContext.contentResolver, applicationContext.cacheDir)
+        )
 
         setContent {
             Hawk_WalletTheme {
@@ -52,9 +62,26 @@ class MainActivity : ComponentActivity() {
                     adminOrderRepository = adminOrderRepository,
                     teamRepository = teamRepository,
                     profileRepository = profileRepository,
-                    sessionManager = sessionManager
+                    supportChatRepository = supportChatRepository,
+                    sessionManager = sessionManager,
+                    sessionRefresher = sessionRefresher
                 )
             }
         }
+    }
+
+    /**
+     * Every touch or key event the user sends to the app - the only thing
+     * that counts as activity for the 12-hour idle timeout. Polling,
+     * refreshes and timers never pass through here.
+     */
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        sessionManager.recordUserActivity()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        sessionManager.flushUserActivity()
     }
 }

@@ -1,24 +1,39 @@
-from django.contrib.auth import authenticate, get_user_model
+from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import transaction
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from core.api import ServiceAPIView, client_ip
+from core.login import (
+    AccountLocked,
+    AccountNotVerified,
+    InvalidCredentials,
+    LoginError,
+    login_with_password,
+)
 from core.models import OTP
+from core.password_reset import (
+    PasswordResetError,
+    confirm_password_reset,
+    request_password_reset,
+    verify_password_reset_otp,
+)
 from core.serializers import (
     LoginSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetVerifySerializer,
     RegisterSerializer,
     ResendOTPSerializer,
     VerifyOTPSerializer,
 )
 from core.services import (
     OTPCooldownError,
-    OTPExpiredError,
-    OTPInvalidError,
-    OTPMaxAttemptsError,
-    OTPNotFoundError,
     OTPServiceError,
     generate_and_send_otp,
     verify_otp,
@@ -111,11 +126,6 @@ class ResendOTPView(APIView):
 
         if purpose == OTP.Purpose.REGISTRATION and user.is_verified:
             return error_response('This account is already verified.')
-        if purpose == OTP.Purpose.LOGIN and not user.is_verified:
-            return error_response(
-                'Please complete registration verification first.',
-                status_code=status.HTTP_403_FORBIDDEN,
-            )
 
         try:
             generate_and_send_otp(user, purpose)
@@ -125,51 +135,105 @@ class ResendOTPView(APIView):
         return success_response('A new OTP has been sent.')
 
 
-class LoginView(APIView):
+class LoginView(ServiceAPIView):
+    """
+    Password login, no OTP (core/login.py). Anonymous by design; no
+    authentication classes, so a stale access token in the header cannot
+    block it.
+    """
+
     permission_classes = [AllowAny]
+    authentication_classes = []
     throttle_classes = [ScopedRateThrottle]
-    throttle_scope = 'otp'
+    throttle_scope = 'login'
+    service_error = LoginError
+    error_status = {
+        InvalidCredentials: status.HTTP_401_UNAUTHORIZED,
+        AccountLocked: status.HTTP_429_TOO_MANY_REQUESTS,
+        AccountNotVerified: status.HTTP_403_FORBIDDEN,
+    }
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         if not serializer.is_valid():
             return error_response('Login failed.', errors=serializer.errors)
 
-        mobile_number = serializer.validated_data['mobile_number']
-        password = serializer.validated_data['password']
+        data = login_with_password(
+            mobile_number=serializer.validated_data['mobile_number'],
+            password=serializer.validated_data['password'],
+            request=request,
+            ip_address=client_ip(request),
+        )
+        return success_response('Login successful.', data=data)
 
-        # authenticate() also enforces is_active, so a disabled account and a
-        # wrong password both fall through to the same generic response.
-        user = authenticate(request, mobile_number=mobile_number, password=password)
-        if user is None:
-            return error_response(
-                'Invalid mobile number or password.',
-                status_code=status.HTTP_401_UNAUTHORIZED,
-            )
 
-        if not user.is_verified:
-            try:
-                generate_and_send_otp(user, OTP.Purpose.REGISTRATION)
-            except OTPCooldownError:
-                pass
-            return error_response(
-                'Please verify your mobile number to complete registration. '
-                'A new OTP has been sent.',
-                status_code=status.HTTP_403_FORBIDDEN,
-            )
+class PasswordResetAPIView(ServiceAPIView):
+    """Anonymous password-reset steps (core/password_reset.py)."""
 
-        try:
-            generate_and_send_otp(user, OTP.Purpose.LOGIN)
-        except OTPCooldownError as exc:
-            return _otp_error_response(exc)
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'otp'
+    service_error = PasswordResetError
 
+
+class PasswordResetRequestView(PasswordResetAPIView):
+    @extend_schema(request=PasswordResetRequestSerializer, responses={200: None})
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response('Password reset request failed.', errors=serializer.errors)
+
+        request_password_reset(mobile_number=serializer.validated_data['mobile_number'])
+        # Same answer whether or not the number has an account.
         return success_response(
-            'OTP sent. Please verify to complete login.',
-            data={'mobile_number': user.mobile_number},
+            'If an account exists for this mobile number, an OTP has been sent.'
         )
 
 
+class PasswordResetVerifyView(PasswordResetAPIView):
+    @extend_schema(request=PasswordResetVerifySerializer, responses={200: None})
+    def post(self, request):
+        serializer = PasswordResetVerifySerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response('Verification failed.', errors=serializer.errors)
+
+        reset_token = verify_password_reset_otp(
+            mobile_number=serializer.validated_data['mobile_number'],
+            code=serializer.validated_data['otp'],
+        )
+        return success_response(
+            'OTP verified. Choose a new password.',
+            data={
+                'reset_token': reset_token,
+                'expires_in_seconds': settings.PASSWORD_RESET_TOKEN_EXPIRY_MINUTES * 60,
+            },
+        )
+
+
+class PasswordResetConfirmView(PasswordResetAPIView):
+    @extend_schema(request=PasswordResetConfirmSerializer, responses={200: None})
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response('Password reset failed.', errors=serializer.errors)
+
+        confirm_password_reset(
+            reset_token=serializer.validated_data['reset_token'],
+            new_password=serializer.validated_data['new_password'],
+            ip_address=client_ip(request),
+        )
+        return success_response('Password reset. Please log in with your new password.')
+
+
 class VerifyLoginOTPView(APIView):
+    """
+    Legacy second step of the old OTP login. Password login no longer
+    issues login OTPs and resend-otp no longer accepts the login purpose, so
+    this endpoint has nothing left to verify. Kept for backward
+    compatibility until it is removed.
+    """
+
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'otp'

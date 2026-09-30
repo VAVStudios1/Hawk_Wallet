@@ -1,11 +1,16 @@
 """API tests for POST /api/auth/token/refresh/ and POST /api/auth/logout/."""
+from datetime import timedelta
+
 import pytest
+from django.conf import settings
 from django.core.cache import cache
+from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.utils import datetime_to_epoch
 
-from core.tokens import issue_token_pair
+from core.tokens import LAST_ACTIVITY_CLAIM, issue_token_pair
 
 REFRESH_URL = '/api/auth/token/refresh/'
 LOGOUT_URL = '/api/auth/logout/'
@@ -17,8 +22,8 @@ def _clear_throttles():
     cache.clear()
 
 
-def _refresh(raw, client=None):
-    return (client or APIClient()).post(REFRESH_URL, {'refresh': raw}, format='json')
+def _refresh(raw, client=None, **extra):
+    return (client or APIClient()).post(REFRESH_URL, {'refresh': raw, **extra}, format='json')
 
 
 def _logout(access, raw):
@@ -152,27 +157,25 @@ def test_logout_only_revokes_the_submitted_token(user):
     assert _refresh(tablet['refresh']).status_code == 200
 
 
-def test_logout_refuses_another_users_token(make_user):
-    me, other = make_user(), make_user()
-    mine = issue_token_pair(me)
-    theirs = issue_token_pair(other)
-
-    response = _logout(mine['access'], theirs['refresh'])
-
-    assert response.status_code == 403
-    assert response.data['errors']['code'] == 'token_not_owned'
-    assert not _is_blacklisted(theirs['refresh'])
-    assert _refresh(theirs['refresh']).status_code == 200
-
-
-def test_logout_requires_authentication(user):
+def test_logout_works_without_an_access_token(user):
+    # The refresh token is the credential, so a client whose access token
+    # has already expired can still end its session.
     raw = issue_token_pair(user)['refresh']
 
     response = APIClient().post(LOGOUT_URL, {'refresh': raw}, format='json')
 
-    assert response.status_code == 401
-    assert response.data['success'] is False
-    assert not _is_blacklisted(raw)
+    assert response.status_code == 200, response.data
+    assert _is_blacklisted(raw)
+    assert _refresh(raw).status_code == 401
+
+
+def test_logout_ignores_an_expired_access_token_header(user):
+    raw = issue_token_pair(user)['refresh']
+
+    response = _logout('expired-or-garbage-access-token', raw)
+
+    assert response.status_code == 200, response.data
+    assert _is_blacklisted(raw)
 
 
 def test_logout_rejects_invalid_token(user):
@@ -208,3 +211,108 @@ def test_logout_requires_token_field(user):
 
     assert response.status_code == 400
     assert 'refresh' in response.data['errors']
+
+
+# --- 12-hour inactivity ------------------------------------------------------
+
+IDLE = int(timedelta(hours=12).total_seconds())
+
+
+def _now():
+    return datetime_to_epoch(timezone.now())
+
+
+def _session_token(user, *, idle_for, claim=True):
+    """
+    A tracked refresh token for a session whose last user activity was
+    `idle_for` seconds ago. claim=False mimics a token issued before the
+    last_activity claim existed (7-day lifetime, activity = iat).
+    """
+    token = RefreshToken.for_user(user)
+    if claim:
+        token[LAST_ACTIVITY_CLAIM] = _now() - idle_for
+    else:
+        token['iat'] = _now() - idle_for
+        token['exp'] = _now() + int(timedelta(days=6).total_seconds())
+    return str(token)
+
+
+def _claims(raw):
+    return RefreshToken(raw, verify=False).payload
+
+
+def test_session_idle_timeout_is_12_hours():
+    assert settings.SESSION_IDLE_TIMEOUT == timedelta(hours=12)
+
+
+def test_login_refresh_token_lasts_one_idle_window(user):
+    claims = _claims(issue_token_pair(user)['refresh'])
+    assert claims['exp'] - claims['iat'] == IDLE
+
+
+def test_active_session_refreshes_within_the_window(user):
+    raw = _session_token(user, idle_for=IDLE - 60)
+
+    response = _refresh(raw, idle_seconds=5)
+
+    assert response.status_code == 200, response.data
+    claims = _claims(response.data['data']['refresh'])
+    # Activity 5 seconds ago: a fresh 12-hour window from then.
+    assert abs(claims[LAST_ACTIVITY_CLAIM] - (_now() - 5)) <= 2
+    assert claims['exp'] == claims[LAST_ACTIVITY_CLAIM] + IDLE
+
+
+def test_session_idle_for_12_hours_cannot_refresh(user):
+    raw = _session_token(user, idle_for=IDLE + 1)
+
+    response = _refresh(raw, idle_seconds=0)
+
+    assert response.status_code == 401
+    assert response.data['errors']['code'] == 'session_expired'
+    assert not OutstandingToken.objects.filter(user=user, blacklistedtoken__isnull=True).exclude(
+        jti=RefreshToken(raw, verify=False)['jti']
+    ).exists()
+
+
+def test_legacy_token_is_idle_from_its_issue_time(user):
+    # Issued 13 hours ago with the old 7-day lifetime: still unexpired by
+    # exp, but past the idle window.
+    raw = _session_token(user, idle_for=IDLE + 3600, claim=False)
+
+    response = _refresh(raw, idle_seconds=0)
+
+    assert response.status_code == 401
+    assert response.data['errors']['code'] == 'session_expired'
+
+
+def test_refresh_without_activity_does_not_extend_the_session(user):
+    # Background polling: refreshes, but claims no user activity.
+    raw = _session_token(user, idle_for=IDLE - 3600)
+    before = _claims(raw)[LAST_ACTIVITY_CLAIM]
+
+    for _ in range(3):
+        response = _refresh(raw)
+        assert response.status_code == 200, response.data
+        raw = response.data['data']['refresh']
+
+    claims = _claims(raw)
+    assert claims[LAST_ACTIVITY_CLAIM] == before
+    # Still ends 12 hours after the last real activity.
+    assert claims['exp'] == before + IDLE
+
+
+def test_idle_seconds_cannot_move_activity_backwards(user):
+    raw = _session_token(user, idle_for=600)
+    before = _claims(raw)[LAST_ACTIVITY_CLAIM]
+
+    response = _refresh(raw, idle_seconds=IDLE * 10)
+
+    assert response.status_code == 200
+    assert _claims(response.data['data']['refresh'])[LAST_ACTIVITY_CLAIM] == before
+
+
+def test_idle_seconds_must_not_be_negative(user):
+    response = _refresh(issue_token_pair(user)['refresh'], idle_seconds=-60)
+
+    assert response.status_code == 400
+    assert 'idle_seconds' in response.data['errors']

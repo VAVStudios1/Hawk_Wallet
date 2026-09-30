@@ -1,16 +1,23 @@
 package com.example.hawk_wallet.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.navigation
 import androidx.navigation.navArgument
 import com.example.hawk_wallet.data.local.SessionManager
 import com.example.hawk_wallet.data.repository.AdminOrderRepository
@@ -20,6 +27,7 @@ import com.example.hawk_wallet.data.repository.HomeRepository
 import com.example.hawk_wallet.data.repository.OrderRepository
 import com.example.hawk_wallet.data.repository.PayoutMethodRepository
 import com.example.hawk_wallet.data.repository.ProfileRepository
+import com.example.hawk_wallet.data.repository.SupportChatRepository
 import com.example.hawk_wallet.data.repository.TeamRepository
 import com.example.hawk_wallet.ui.components.HawkNavDestination
 import com.example.hawk_wallet.ui.model.QuickAction
@@ -30,6 +38,10 @@ import com.example.hawk_wallet.ui.screens.admin.AdminOrdersScreen
 import com.example.hawk_wallet.ui.screens.admin.AdminOrdersViewModel
 import com.example.hawk_wallet.ui.screens.admin.CreateOfferScreen
 import com.example.hawk_wallet.ui.screens.admin.CreateOfferViewModel
+import com.example.hawk_wallet.ui.screens.auth.forgot.ForgotPasswordMobileScreen
+import com.example.hawk_wallet.ui.screens.auth.forgot.ForgotPasswordOtpScreen
+import com.example.hawk_wallet.ui.screens.auth.forgot.ForgotPasswordViewModel
+import com.example.hawk_wallet.ui.screens.auth.forgot.ResetPasswordScreen
 import com.example.hawk_wallet.ui.screens.auth.login.LoginScreen
 import com.example.hawk_wallet.ui.screens.auth.login.LoginViewModel
 import com.example.hawk_wallet.ui.screens.auth.otp.OtpVerificationScreen
@@ -63,6 +75,14 @@ import com.example.hawk_wallet.ui.screens.profile.PersonalInfoViewModel
 import com.example.hawk_wallet.ui.screens.profile.ProfileActions
 import com.example.hawk_wallet.ui.screens.profile.ProfileScreen
 import com.example.hawk_wallet.ui.screens.profile.ProfileViewModel
+import com.example.hawk_wallet.ui.screens.support.AdminSupportChatScreen
+import com.example.hawk_wallet.ui.screens.support.AdminSupportChatSource
+import com.example.hawk_wallet.ui.screens.support.AdminSupportInboxScreen
+import com.example.hawk_wallet.ui.screens.support.AdminSupportInboxViewModel
+import com.example.hawk_wallet.ui.screens.support.MemberSupportChatSource
+import com.example.hawk_wallet.ui.screens.support.SupportChatScreen
+import com.example.hawk_wallet.ui.screens.support.SupportChatViewModel
+import com.example.hawk_wallet.ui.screens.support.SupportUnreadViewModel
 import com.example.hawk_wallet.ui.screens.team.CommissionHistoryScreen
 import com.example.hawk_wallet.ui.screens.team.CommissionHistoryViewModel
 import com.example.hawk_wallet.ui.screens.team.TeamMembersScreen
@@ -82,6 +102,7 @@ fun HawkNavHost(
     adminOrderRepository: AdminOrderRepository,
     teamRepository: TeamRepository,
     profileRepository: ProfileRepository,
+    supportChatRepository: SupportChatRepository,
     sessionManager: SessionManager,
     startDestination: String
 ) {
@@ -98,6 +119,50 @@ fun HawkNavHost(
     val claimViewModel: ClaimViewModel = viewModel(
         factory = viewModelFactory { initializer { ClaimViewModel(orderRepository, payoutMethodRepository) } }
     )
+
+    // The member's unread support count for the Home bell (activity scope). It
+    // polls only while the app is in the foreground and a member is logged in;
+    // the count is the backend's unread_count, never counted on the device.
+    val supportUnreadViewModel: SupportUnreadViewModel = viewModel(
+        factory = viewModelFactory { initializer { SupportUnreadViewModel(supportChatRepository) } }
+    )
+    val isLoggedIn by sessionManager.isLoggedInFlow.collectAsState(initial = false)
+    val sessionRole by sessionManager.roleFlow.collectAsState(initial = null)
+    val isMemberSession = isLoggedIn && sessionRole == "MEMBER"
+    val appLifecycleOwner = LocalLifecycleOwner.current
+
+    // Global session expiry. However the session ended without a logout
+    // (refresh refused, idle timeout), and whichever screen is open, the user
+    // lands on Login with nothing left on the back stack.
+    LaunchedEffect(navController) {
+        sessionManager.sessionExpired.collect {
+            navController.navigate(HawkRoutes.LOGIN) {
+                popUpTo(navController.graph.id) { inclusive = true }
+                launchSingleTop = true
+            }
+            navController.currentBackStackEntry?.savedStateHandle
+                ?.set(HawkRoutes.LOGIN_NOTICE_KEY, SESSION_EXPIRED_NOTICE)
+        }
+    }
+    // Local mirror of the backend's 12-hour idle timeout, checked each time
+    // the app comes back to the foreground.
+    LaunchedEffect(appLifecycleOwner) {
+        appLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            if (sessionManager.hasSession() && sessionManager.isIdleExpired()) {
+                sessionManager.expireSession()
+            }
+        }
+    }
+    LaunchedEffect(appLifecycleOwner, isMemberSession) {
+        if (isMemberSession) {
+            appLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                supportUnreadViewModel.pollWhileForeground()
+            }
+        } else {
+            supportUnreadViewModel.clear()
+        }
+    }
+    val openSupport = { navController.navigate(HawkRoutes.SUPPORT) { launchSingleTop = true } }
 
     // Team is pushed on top of Home, replacing whichever tab (e.g. Orders) was open.
     val openTeam = {
@@ -157,17 +222,64 @@ fun HawkNavHost(
     }
 
     NavHost(navController = navController, startDestination = startDestination) {
-        composable(HawkRoutes.LOGIN) {
+        composable(HawkRoutes.LOGIN) { backStackEntry ->
             val viewModel: LoginViewModel = viewModel(
-                factory = viewModelFactory { initializer { LoginViewModel(authRepository) } }
+                factory = viewModelFactory { initializer { LoginViewModel(authRepository, sessionManager) } }
             )
+            val handle = backStackEntry.savedStateHandle
+            val pendingNotice by handle.getStateFlow<String?>(HawkRoutes.LOGIN_NOTICE_KEY, null).collectAsState()
             LoginScreen(
                 viewModel = viewModel,
                 onNavigateToRegister = { navController.navigate(HawkRoutes.REGISTER) },
-                onOtpRequested = { mobileNumber ->
-                    navController.navigate(HawkRoutes.otp(mobileNumber, "login"))
-                }
+                onForgotPasswordClick = { navController.navigate(HawkRoutes.FORGOT_PASSWORD_GRAPH) },
+                onLoggedIn = { role ->
+                    navController.navigate(HawkRoutes.destinationForRole(role)) {
+                        popUpTo(navController.graph.id) { inclusive = true }
+                    }
+                },
+                // Unverified account: finish registration with its OTP (never a login OTP).
+                onVerificationRequired = { mobileNumber ->
+                    navController.navigate(HawkRoutes.otp(mobileNumber))
+                },
+                pendingNotice = pendingNotice,
+                onPendingNoticeShown = { handle[HawkRoutes.LOGIN_NOTICE_KEY] = null }
             )
+        }
+
+        navigation(
+            startDestination = HawkRoutes.FORGOT_PASSWORD_MOBILE,
+            route = HawkRoutes.FORGOT_PASSWORD_GRAPH
+        ) {
+            composable(HawkRoutes.FORGOT_PASSWORD_MOBILE) { entry ->
+                ForgotPasswordMobileScreen(
+                    viewModel = forgotPasswordViewModel(navController, entry, authRepository),
+                    onBackClick = { navController.popBackStack() },
+                    onOtpRequested = { navController.navigate(HawkRoutes.FORGOT_PASSWORD_OTP) }
+                )
+            }
+            composable(HawkRoutes.FORGOT_PASSWORD_OTP) { entry ->
+                ForgotPasswordOtpScreen(
+                    viewModel = forgotPasswordViewModel(navController, entry, authRepository),
+                    onVerified = { navController.navigate(HawkRoutes.RESET_PASSWORD) }
+                )
+            }
+            composable(HawkRoutes.RESET_PASSWORD) { entry ->
+                val backToMobile = {
+                    navController.popBackStack(HawkRoutes.FORGOT_PASSWORD_MOBILE, inclusive = false)
+                    Unit
+                }
+                ResetPasswordScreen(
+                    viewModel = forgotPasswordViewModel(navController, entry, authRepository),
+                    onAbandon = backToMobile,
+                    onStartAgain = backToMobile,
+                    onCompleted = { message ->
+                        // Popping the graph clears its ViewModel (and any token).
+                        navController.popBackStack(HawkRoutes.FORGOT_PASSWORD_GRAPH, inclusive = true)
+                        navController.currentBackStackEntry?.savedStateHandle
+                            ?.set(HawkRoutes.LOGIN_NOTICE_KEY, message)
+                    }
+                )
+            }
         }
 
         composable(HawkRoutes.REGISTER) {
@@ -178,35 +290,24 @@ fun HawkNavHost(
                 viewModel = viewModel,
                 onNavigateToLogin = { navController.popBackStack() },
                 onRegistered = { mobileNumber ->
-                    navController.navigate(HawkRoutes.otp(mobileNumber, "registration"))
+                    navController.navigate(HawkRoutes.otp(mobileNumber))
                 }
             )
         }
 
         composable(
             route = HawkRoutes.OTP,
-            arguments = listOf(
-                navArgument("mobileNumber") { type = NavType.StringType },
-                navArgument("purpose") { type = NavType.StringType }
-            )
+            arguments = listOf(navArgument("mobileNumber") { type = NavType.StringType })
         ) { backStackEntry ->
             val mobileNumber = backStackEntry.arguments?.getString("mobileNumber").orEmpty()
-            val purpose = backStackEntry.arguments?.getString("purpose").orEmpty()
             val viewModel: OtpViewModel = viewModel(
-                factory = viewModelFactory {
-                    initializer { OtpViewModel(authRepository, sessionManager, mobileNumber, purpose) }
-                }
+                factory = viewModelFactory { initializer { OtpViewModel(authRepository, mobileNumber) } }
             )
             OtpVerificationScreen(
                 viewModel = viewModel,
                 onRegistrationVerified = {
                     navController.navigate(HawkRoutes.LOGIN) {
                         popUpTo(HawkRoutes.LOGIN) { inclusive = true }
-                    }
-                },
-                onLoginVerified = { role ->
-                    navController.navigate(HawkRoutes.destinationForRole(role)) {
-                        popUpTo(0)
                     }
                 }
             )
@@ -216,8 +317,12 @@ fun HawkNavHost(
             val viewModel: HomeViewModel = viewModel(
                 factory = viewModelFactory { initializer { HomeViewModel(homeRepository) } }
             )
+            val supportUnreadCount by supportUnreadViewModel.unreadCount.collectAsState()
+            // Back on Home (e.g. from Support Chat, which marked messages read): refresh at once.
+            LaunchedEffect(Unit) { supportUnreadViewModel.refresh() }
             HomeScreen(
                 viewModel = viewModel,
+                supportUnreadCount = supportUnreadCount,
                 actions = HomeActions(
                     onQuickActionClick = { action ->
                         if (action == QuickAction.ORDER) {
@@ -225,6 +330,10 @@ fun HawkNavHost(
                         }
                     },
                     onInviteClick = openTeam,
+                    // Home's existing Support button opens the member's support chat.
+                    onSupportClick = openSupport,
+                    // The bell's count is unread support messages, so it opens the same chat.
+                    onNotificationClick = openSupport,
                     onBottomNavSelect = { destination ->
                         when (destination) {
                             HawkNavDestination.WALLET ->
@@ -474,14 +583,62 @@ fun HawkNavHost(
                 onCreateOfferClick = {
                     navController.navigate(HawkRoutes.ADMIN_CREATE_OFFER) { launchSingleTop = true }
                 },
+                onSupportClick = {
+                    navController.navigate(HawkRoutes.ADMIN_SUPPORT_INBOX) { launchSingleTop = true }
+                },
                 onLogoutClick = {
                     scope.launch {
+                        // Best effort, as on Profile: revoke this device's
+                        // refresh token, then always clear the local session.
+                        sessionManager.getRefreshToken()?.let { authRepository.logout(it) }
                         sessionManager.clearSession()
                         navController.navigate(HawkRoutes.LOGIN) {
-                            popUpTo(0)
+                            popUpTo(navController.graph.id) { inclusive = true }
                         }
                     }
                 }
+            )
+        }
+
+        composable(HawkRoutes.SUPPORT) {
+            val viewModel: SupportChatViewModel = viewModel(
+                factory = viewModelFactory {
+                    initializer { SupportChatViewModel(MemberSupportChatSource(supportChatRepository), supportChatRepository) }
+                }
+            )
+            SupportChatScreen(viewModel = viewModel, onBackClick = { navController.popBackStack() })
+        }
+
+        composable(HawkRoutes.ADMIN_SUPPORT_INBOX) {
+            val role by sessionManager.roleFlow.collectAsState(initial = null)
+            val viewModel: AdminSupportInboxViewModel = viewModel(
+                factory = viewModelFactory { initializer { AdminSupportInboxViewModel(supportChatRepository) } }
+            )
+            AdminSupportInboxScreen(
+                viewModel = viewModel,
+                isSuperAdmin = role == "SUPER_ADMIN",
+                onBackClick = { navController.popBackStack() },
+                onConversationClick = { id -> navController.navigate(HawkRoutes.adminSupportChat(id)) }
+            )
+        }
+
+        composable(
+            route = HawkRoutes.ADMIN_SUPPORT_CHAT,
+            arguments = listOf(navArgument(HawkRoutes.CONVERSATION_ID_ARG) { type = NavType.StringType })
+        ) { backStackEntry ->
+            val conversationId = backStackEntry.arguments?.getString(HawkRoutes.CONVERSATION_ID_ARG).orEmpty()
+            val role by sessionManager.roleFlow.collectAsState(initial = null)
+            val viewModel: SupportChatViewModel = viewModel(
+                factory = viewModelFactory {
+                    initializer {
+                        SupportChatViewModel(AdminSupportChatSource(supportChatRepository, conversationId), supportChatRepository)
+                    }
+                }
+            )
+            AdminSupportChatScreen(
+                viewModel = viewModel,
+                isSuperAdmin = role == "SUPER_ADMIN",
+                onBackClick = { navController.popBackStack() }
             )
         }
 
@@ -517,4 +674,20 @@ fun HawkNavHost(
             )
         }
     }
+}
+
+private const val SESSION_EXPIRED_NOTICE = "Your session has expired. Please log in again."
+
+/** The forgot-password flow's shared ViewModel, scoped to its nested graph. */
+@Composable
+private fun forgotPasswordViewModel(
+    navController: NavHostController,
+    entry: NavBackStackEntry,
+    authRepository: AuthRepository
+): ForgotPasswordViewModel {
+    val graphEntry = remember(entry) { navController.getBackStackEntry(HawkRoutes.FORGOT_PASSWORD_GRAPH) }
+    return viewModel(
+        viewModelStoreOwner = graphEntry,
+        factory = viewModelFactory { initializer { ForgotPasswordViewModel(authRepository) } }
+    )
 }

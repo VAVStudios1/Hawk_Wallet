@@ -3,6 +3,9 @@ from django.urls import path
 from core.token_views import LogoutView, TokenRefreshView
 from core.views import (
     LoginView,
+    PasswordResetConfirmView,
+    PasswordResetRequestView,
+    PasswordResetVerifyView,
     RegisterView,
     ResendOTPView,
     VerifyLoginOTPView,
@@ -17,6 +20,9 @@ urlpatterns = [
     path('resend-otp/', ResendOTPView.as_view(), name='resend-otp'),
     path('login/', LoginView.as_view(), name='login'),
     path('verify-login-otp/', VerifyLoginOTPView.as_view(), name='verify-login-otp'),
+    path('password-reset/request/', PasswordResetRequestView.as_view(), name='password-reset-request'),
+    path('password-reset/verify/', PasswordResetVerifyView.as_view(), name='password-reset-verify'),
+    path('password-reset/confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('logout/', LogoutView.as_view(), name='logout'),
 ]

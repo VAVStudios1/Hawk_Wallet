@@ -1,31 +1,38 @@
 """
 Refresh-token lifecycle on top of SimpleJWT's token_blacklist app.
 
-Login (VerifyLoginOTPView) issues pairs with RefreshToken.for_user, which
-records each refresh token as an OutstandingToken. From there:
+Login (core/login.py) issues pairs with issue_token_pair, which records each
+refresh token as an OutstandingToken. From there:
 
-- rotate_refresh_token: SimpleJWT's own TokenRefreshSerializer, which
-  blacklists the used token and issues a tracked replacement
-  (ROTATE_REFRESH_TOKENS + BLACKLIST_AFTER_ROTATION). It runs under a lock
+- rotate_refresh_token: exchanges a refresh token for a new pair and
+  blacklists the used one (single-use refresh tokens). It runs under a lock
   on the user's row so two refreshes of one token, or a refresh racing a
-  password change, cannot both succeed.
-- blacklist_own_refresh_token: logout of one refresh token, only the
-  caller's own.
+  password change or reset, cannot both succeed.
+- blacklist_refresh_token: logout of one refresh token.
 - revoke_all_refresh_tokens: blacklists every live refresh token a user
-  has (password change).
+  has (password change, password reset).
+
+Session inactivity (settings.SESSION_IDLE_TIMEOUT): each refresh token
+carries a `last_activity` claim - the last time the user actually used the
+app (a token without it dates from its `iat`, i.e. login). A refresh is
+refused once that is SESSION_IDLE_TIMEOUT or more in the past, and every
+rotated token expires exactly SESSION_IDLE_TIMEOUT after it. Rotation moves
+`last_activity` forward only when the client reports recent user activity
+(`idle_seconds`); a refresh made by background polling carries the old value
+over, so it keeps the session alive only until the idle window runs out.
 
 Access tokens are stateless and are not revoked: one already issued stays
 valid until it expires (ACCESS_TOKEN_LIFETIME).
 """
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
-from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.exceptions import TokenError
-from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.utils import datetime_from_epoch, datetime_to_epoch
 
 User = get_user_model()
 
@@ -45,51 +52,77 @@ class InvalidRefreshToken(AuthTokenError):
     default_message = 'Refresh token is invalid, expired or revoked.'
 
 
-class RefreshTokenNotOwned(AuthTokenError):
-    code = 'token_not_owned'
-    default_message = 'This refresh token does not belong to you.'
+class SessionIdleExpired(InvalidRefreshToken):
+    code = 'session_expired'
+    default_message = 'Your session has expired due to inactivity. Please log in again.'
+
+
+LAST_ACTIVITY_CLAIM = 'last_activity'
 
 
 def issue_token_pair(user):
-    """A new, tracked refresh token and its access token for `user`."""
+    """
+    A new, tracked refresh token and its access token for `user`. Issuing
+    counts as activity: the session's idle window starts now.
+    """
     refresh = RefreshToken.for_user(user)
     return {'access': str(refresh.access_token), 'refresh': str(refresh)}
 
 
-def rotate_refresh_token(raw_token):
+def rotate_refresh_token(raw_token, idle_seconds=None):
     """
     Exchange a valid refresh token for a new pair; the old one is
     blacklisted. Only tokens recorded as outstanding are accepted, so every
     refresh token that works can also be revoked.
+
+    `idle_seconds` is how long ago the user last interacted with the app, as
+    the client reports it; None means no activity is claimed. It can only
+    move the session's last activity forward, never past now, and never
+    revive a session whose idle window has already run out.
     """
     token = _verified_refresh_token(raw_token)
     with transaction.atomic():
-        lock_user(token.payload.get(api_settings.USER_ID_CLAIM))
-        if not OutstandingToken.objects.filter(jti=token[api_settings.JTI_CLAIM]).exists():
+        user = lock_user(token.payload.get(api_settings.USER_ID_CLAIM))
+        jti = token[api_settings.JTI_CLAIM]
+        if not OutstandingToken.objects.filter(jti=jti).exists():
             raise InvalidRefreshToken()
-
-        # Re-validated under the lock: a concurrent refresh, logout or
+        # Re-checked under the lock: a concurrent refresh, logout or
         # password change may have blacklisted the token meanwhile.
-        serializer = TokenRefreshSerializer(data={'refresh': raw_token})
-        try:
-            serializer.is_valid(raise_exception=True)
-        except (TokenError, AuthenticationFailed):
+        if BlacklistedToken.objects.filter(token__jti=jti).exists():
             raise InvalidRefreshToken()
-        return {
-            'access': serializer.validated_data['access'],
-            'refresh': serializer.validated_data['refresh'],
-        }
+        if not api_settings.USER_AUTHENTICATION_RULE(user):
+            raise InvalidRefreshToken()
+
+        idle_limit = int(settings.SESSION_IDLE_TIMEOUT.total_seconds())
+        now = datetime_to_epoch(timezone.now())
+        last_activity = session_last_activity(token)
+        if now - last_activity >= idle_limit:
+            raise SessionIdleExpired()
+        if idle_seconds is not None:
+            last_activity = max(last_activity, now - max(int(idle_seconds), 0))
+
+        token.blacklist()
+        token[LAST_ACTIVITY_CLAIM] = last_activity
+        token.set_jti()
+        token.set_iat()
+        token.set_exp(from_time=datetime_from_epoch(last_activity), lifetime=settings.SESSION_IDLE_TIMEOUT)
+        token.outstand()
+        return {'access': str(token.access_token), 'refresh': str(token)}
 
 
-def blacklist_own_refresh_token(*, user, raw_token):
+def session_last_activity(token):
+    """Epoch seconds of the session's last user activity, per the token."""
+    return int(token.payload.get(LAST_ACTIVITY_CLAIM, token['iat']))
+
+
+def blacklist_refresh_token(raw_token):
     """
-    Logout: blacklist `raw_token` if it is a valid refresh token belonging
-    to `user`. Another user's token is refused and left untouched.
+    Logout: blacklist `raw_token` if it is a valid refresh token. The token
+    itself is the credential - whoever holds it could use it, so revoking it
+    grants nothing - which lets a client log out after its access token has
+    expired.
     """
-    token = _verified_refresh_token(raw_token)
-    if str(token.payload.get(api_settings.USER_ID_CLAIM)) != str(user.pk):
-        raise RefreshTokenNotOwned()
-    token.blacklist()
+    _verified_refresh_token(raw_token).blacklist()
 
 
 def revoke_all_refresh_tokens(user):

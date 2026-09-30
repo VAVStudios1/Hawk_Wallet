@@ -117,6 +117,17 @@ class AuditEvent(AppendOnlyModel):
         PROFILE_NAME_CHANGED = 'PROFILE_NAME_CHANGED', 'Profile name changed'
         # metadata never holds a password, hash or token.
         PASSWORD_CHANGED = 'PASSWORD_CHANGED', 'Password changed'
+        # Authentication. metadata never holds a password, OTP or token.
+        LOGIN_SUCCEEDED = 'LOGIN_SUCCEEDED', 'Login succeeded'
+        LOGIN_FAILED = 'LOGIN_FAILED', 'Login failed'
+        PASSWORD_RESET = 'PASSWORD_RESET', 'Password reset'
+        # Support chat. metadata never holds message text or file names.
+        # Routing is recorded once, when the conversation is created.
+        SUPPORT_CONVERSATION_STARTED = 'SUPPORT_CONVERSATION_STARTED', 'Support conversation started'
+        SUPPORT_CONVERSATION_CLOSED = 'SUPPORT_CONVERSATION_CLOSED', 'Support conversation closed'
+        # A SUPER_ADMIN opening a conversation assigned to another admin.
+        SUPPORT_CONVERSATION_VIEWED = 'SUPPORT_CONVERSATION_VIEWED', 'Support conversation viewed'
+        SUPPORT_ATTACHMENT_VIEWED = 'SUPPORT_ATTACHMENT_VIEWED', 'Support attachment viewed'
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,

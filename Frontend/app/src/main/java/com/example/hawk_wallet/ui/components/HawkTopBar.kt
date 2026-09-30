@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -33,7 +34,9 @@ fun HawkTopBar(
     greetingName: String,
     hasUnreadNotifications: Boolean,
     onNotificationClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Unread items to show on the bell (e.g. support messages); 0 = no count badge. */
+    unreadCount: Int = 0
 ) {
     Row(
         modifier = modifier
@@ -82,7 +85,26 @@ fun HawkTopBar(
                     tint = MaterialTheme.colorScheme.onSurface
                 )
             }
-            if (hasUnreadNotifications) {
+            if (unreadCount > 0) {
+                // Small red count badge on the bell's top-right corner.
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = (-2).dp, y = 2.dp)
+                        .defaultMinSize(minWidth = 18.dp, minHeight = 18.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.error)
+                        .padding(horizontal = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (unreadCount > 9) "9+" else unreadCount.toString(),
+                        color = MaterialTheme.colorScheme.onError,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            } else if (hasUnreadNotifications) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Support chat attachments copied for viewing (SupportAttachmentFiles). Nothing else is shared. -->
+<paths>
+    <cache-path
+        name="support_files"
+        path="support_files/" />
+</paths>

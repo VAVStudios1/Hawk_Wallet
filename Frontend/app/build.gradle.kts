@@ -59,6 +59,9 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging.interceptor)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.credentials)
+    // Lets Credential Manager reach Google Password Manager on Android 13 and below.
+    implementation(libs.androidx.credentials.play.services.auth)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.junit)

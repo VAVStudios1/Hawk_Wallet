@@ -2,7 +2,6 @@ package com.example.hawk_wallet.ui.screens.auth.otp
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.hawk_wallet.data.local.SessionManager
 import com.example.hawk_wallet.data.repository.ApiResult
 import com.example.hawk_wallet.data.repository.AuthRepository
 import kotlinx.coroutines.Job
@@ -15,17 +14,18 @@ import kotlinx.coroutines.launch
 // Matches the backend's default OTP_RESEND_COOLDOWN_SECONDS - purely a UI
 // head start; the server remains authoritative and returns the exact
 // retry_after_seconds on a 429 if this guess is ever wrong.
-private const val DEFAULT_RESEND_COOLDOWN_SECONDS = 30
-private const val PURPOSE_REGISTRATION = "registration"
+internal const val DEFAULT_RESEND_COOLDOWN_SECONDS = 30
 
+/**
+ * Registration OTP verification. Login needs no OTP; the password-reset
+ * OTP has its own flow (ForgotPasswordViewModel).
+ */
 class OtpViewModel(
     private val authRepository: AuthRepository,
-    private val sessionManager: SessionManager,
-    mobileNumber: String,
-    purpose: String
+    mobileNumber: String
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(OtpUiState(mobileNumber = mobileNumber, purpose = purpose))
+    private val _uiState = MutableStateFlow(OtpUiState(mobileNumber = mobileNumber))
     val uiState: StateFlow<OtpUiState> = _uiState
 
     private var cooldownJob: Job? = null
@@ -48,25 +48,12 @@ class OtpViewModel(
         _uiState.update { it.copy(isVerifying = true, generalError = null, otpError = null) }
 
         viewModelScope.launch {
-            if (state.purpose == PURPOSE_REGISTRATION) {
-                when (val result = authRepository.verifyRegistrationOtp(state.mobileNumber, state.otp)) {
-                    is ApiResult.Success -> _uiState.update {
-                        it.copy(isVerifying = false, registrationVerified = true)
-                    }
-                    is ApiResult.Error -> _uiState.update {
-                        it.copy(isVerifying = false, generalError = result.message)
-                    }
+            when (val result = authRepository.verifyRegistrationOtp(state.mobileNumber, state.otp)) {
+                is ApiResult.Success -> _uiState.update {
+                    it.copy(isVerifying = false, registrationVerified = true)
                 }
-            } else {
-                when (val result = authRepository.verifyLoginOtp(state.mobileNumber, state.otp)) {
-                    is ApiResult.Success -> {
-                        val user = result.data.user
-                        sessionManager.saveSession(result.data.access, result.data.refresh, user.name, user.role)
-                        _uiState.update { it.copy(isVerifying = false, loggedInRole = user.role) }
-                    }
-                    is ApiResult.Error -> _uiState.update {
-                        it.copy(isVerifying = false, generalError = result.message)
-                    }
+                is ApiResult.Error -> _uiState.update {
+                    it.copy(isVerifying = false, generalError = result.message)
                 }
             }
         }
@@ -79,7 +66,7 @@ class OtpViewModel(
         _uiState.update { it.copy(isResending = true, generalError = null) }
 
         viewModelScope.launch {
-            when (val result = authRepository.resendOtp(state.mobileNumber, state.purpose)) {
+            when (val result = authRepository.resendRegistrationOtp(state.mobileNumber)) {
                 is ApiResult.Success -> {
                     _uiState.update { it.copy(isResending = false) }
                     startCooldown(DEFAULT_RESEND_COOLDOWN_SECONDS)

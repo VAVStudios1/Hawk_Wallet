@@ -67,4 +67,28 @@ class VerifyOTPSerializer(serializers.Serializer):
 
 class ResendOTPSerializer(serializers.Serializer):
     mobile_number = serializers.CharField(max_length=10)
-    purpose = serializers.ChoiceField(choices=OTP.Purpose.choices)
+    # Registration only. Login needs no OTP, and a login OTP would be a way
+    # to sign in (verify-login-otp) without the password or its lockout.
+    # Reset OTPs go through password-reset/request/, which hides whether the
+    # account exists and applies the reset caps.
+    purpose = serializers.ChoiceField(choices=[OTP.Purpose.REGISTRATION.value])
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    mobile_number = serializers.CharField(max_length=10, validators=[mobile_number_validator])
+
+
+class PasswordResetVerifySerializer(serializers.Serializer):
+    mobile_number = serializers.CharField(max_length=10, validators=[mobile_number_validator])
+    otp = serializers.CharField(max_length=10, min_length=4)
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    reset_token = serializers.CharField(max_length=128, write_only=True)
+    new_password = serializers.CharField(write_only=True, trim_whitespace=False)
+    confirm_password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        return attrs

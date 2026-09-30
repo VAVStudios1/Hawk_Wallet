@@ -79,13 +79,16 @@ data class HomeActions(
 fun HomeScreen(
     viewModel: HomeViewModel,
     modifier: Modifier = Modifier,
-    actions: HomeActions = HomeActions()
+    actions: HomeActions = HomeActions(),
+    /** The backend's unread support-message count, shown on the bell. */
+    supportUnreadCount: Int = 0
 ) {
     val uiState by viewModel.uiState.collectAsState()
     HomeScreenContent(
         uiState = uiState,
         onRefresh = viewModel::refresh,
         actions = actions,
+        supportUnreadCount = supportUnreadCount,
         modifier = modifier
     )
 }
@@ -96,6 +99,7 @@ private fun HomeScreenContent(
     uiState: HomeUiState,
     onRefresh: () -> Unit,
     actions: HomeActions,
+    supportUnreadCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
     Scaffold(
@@ -124,7 +128,8 @@ private fun HomeScreenContent(
                     content = content,
                     errorMessage = uiState.errorMessage,
                     onRetry = onRefresh,
-                    actions = actions
+                    actions = actions,
+                    supportUnreadCount = supportUnreadCount
                 )
             }
             uiState.isLoading -> HomeSkeleton(screenModifier)
@@ -142,7 +147,8 @@ private fun HomeDashboard(
     content: HomeContent,
     errorMessage: String?,
     onRetry: () -> Unit,
-    actions: HomeActions
+    actions: HomeActions,
+    supportUnreadCount: Int = 0
 ) {
     val sectionModifier = Modifier.padding(horizontal = ScreenHorizontalPadding)
     LazyColumn(
@@ -154,9 +160,10 @@ private fun HomeDashboard(
         item {
             HawkTopBar(
                 greetingName = content.greetingName,
-                // No notifications API exists yet, so nothing is unread.
+                // No general notifications API exists yet; the count is unread support messages.
                 hasUnreadNotifications = false,
-                onNotificationClick = actions.onNotificationClick
+                onNotificationClick = actions.onNotificationClick,
+                unreadCount = supportUnreadCount
             )
         }
 

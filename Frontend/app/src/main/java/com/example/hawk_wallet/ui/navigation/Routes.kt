@@ -3,6 +3,16 @@ package com.example.hawk_wallet.ui.navigation
 object HawkRoutes {
     const val LOGIN = "login"
     const val REGISTER = "register"
+
+    /** Login back-stack entry key: a one-shot notice (session expired, password reset). */
+    const val LOGIN_NOTICE_KEY = "login_notice"
+
+    // Forgot password: a nested graph, so its screens share one ViewModel
+    // (holding the reset token in memory) that is cleared when the flow ends.
+    const val FORGOT_PASSWORD_GRAPH = "forgot_password"
+    const val FORGOT_PASSWORD_MOBILE = "forgot_password_mobile"
+    const val FORGOT_PASSWORD_OTP = "forgot_password_otp"
+    const val RESET_PASSWORD = "reset_password"
     const val HOME = "home"
     const val ADMIN_DASHBOARD = "admin_dashboard"
 
@@ -16,7 +26,8 @@ object HawkRoutes {
 
     // PERSONAL / BUY accounts (paid FROM) are the BUY tab of WALLET; this adds one.
     const val ADD_BUY_METHOD = "add_buy_method"
-    const val OTP = "otp/{mobileNumber}/{purpose}"
+    // Registration OTP verification (after Register, or a login refused as unverified).
+    const val OTP = "otp/{mobileNumber}"
 
     // Orders tab: offers -> details -> payout method -> claim -> pay-in -> status.
     const val ORDERS = "orders"
@@ -49,10 +60,21 @@ object HawkRoutes {
 
     fun adminOrderDetails(orderId: Long) = "admin_order_details/$orderId"
 
+    // Support chat. Member: one screen (start, then the conversation); the
+    // backend always uses their own conversation, so the route has no id.
+    const val SUPPORT = "support"
+
+    // Admin support: dashboard -> inbox -> one conversation (by its public id).
+    const val ADMIN_SUPPORT_INBOX = "admin_support_inbox"
+    const val CONVERSATION_ID_ARG = "conversationId"
+    const val ADMIN_SUPPORT_CHAT = "admin_support_chat/{$CONVERSATION_ID_ARG}"
+
+    fun adminSupportChat(conversationId: String) = "admin_support_chat/$conversationId"
+
     fun payIn(orderId: Long) = "pay_in/$orderId"
     fun orderStatus(orderId: Long) = "order_status/$orderId"
 
-    fun otp(mobileNumber: String, purpose: String) = "otp/$mobileNumber/$purpose"
+    fun otp(mobileNumber: String) = "otp/$mobileNumber"
 
     // Mirrors the backend's User.Role values (core/models.py) exactly.
     fun destinationForRole(role: String?): String = when (role) {

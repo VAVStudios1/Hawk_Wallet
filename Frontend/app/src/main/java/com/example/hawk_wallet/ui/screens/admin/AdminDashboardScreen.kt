@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.AddCircleOutline
+import androidx.compose.material.icons.outlined.SupportAgent
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -52,6 +53,7 @@ fun AdminDashboardScreen(
     userRole: String,
     onOrdersClick: () -> Unit,
     onCreateOfferClick: () -> Unit,
+    onSupportClick: () -> Unit,
     onLogoutClick: () -> Unit
 ) {
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { innerPadding ->
@@ -82,6 +84,17 @@ fun AdminDashboardScreen(
                     description = "Publish a new order offer for members to claim.",
                     icon = Icons.Outlined.AddCircleOutline,
                     onClick = onCreateOfferClick
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                DashboardEntryCard(
+                    title = "Support",
+                    description = if (userRole == "SUPER_ADMIN") {
+                        "View every member support conversation (read-only)."
+                    } else {
+                        "Reply to members' support conversations assigned to you."
+                    },
+                    icon = Icons.Outlined.SupportAgent,
+                    onClick = onSupportClick
                 )
                 Spacer(modifier = Modifier.height(32.dp))
                 OutlinedButton(
@@ -195,6 +208,6 @@ private fun DashboardEntryCard(title: String, description: String, icon: ImageVe
 @Composable
 private fun AdminDashboardScreenPreview() {
     Hawk_WalletTheme {
-        AdminDashboardScreen(userName = "Jordan Admin", userRole = "SUPER_ADMIN", onOrdersClick = {}, onCreateOfferClick = {}, onLogoutClick = {})
+        AdminDashboardScreen(userName = "Jordan Admin", userRole = "SUPER_ADMIN", onOrdersClick = {}, onCreateOfferClick = {}, onSupportClick = {}, onLogoutClick = {})
     }
 }

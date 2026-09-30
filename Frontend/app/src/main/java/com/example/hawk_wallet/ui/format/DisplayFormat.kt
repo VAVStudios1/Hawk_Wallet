@@ -39,22 +39,42 @@ object DisplayFormat {
      * values are shown as received.
      */
     fun dateTime(isoTimestamp: String, now: Date = Date()): String {
-        // java.time needs API 26 (minSdk is 24), so drop fractional seconds
-        // and normalise "Z" before parsing with SimpleDateFormat.
-        val normalised = isoTimestamp
-            .replace(Regex("\\.\\d+"), "")
-            .replace(Regex("Z$"), "+00:00")
-        val date = try {
-            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(normalised)
-        } catch (e: Exception) {
-            null
-        } ?: return isoTimestamp
+        val date = parseIso(isoTimestamp) ?: return isoTimestamp
 
         val time = SimpleDateFormat("h:mm a", Locale.getDefault()).format(date)
         return when (daysBetween(date, now)) {
             0 -> "Today, $time"
             1 -> "Yesterday, $time"
             else -> SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(date) + ", " + time
+        }
+    }
+
+    /** ISO-8601 timestamp -> "10:24 AM" in the device's time zone (e.g. a chat bubble). */
+    fun time(isoTimestamp: String): String {
+        val date = parseIso(isoTimestamp) ?: return ""
+        return SimpleDateFormat("h:mm a", Locale.getDefault()).format(date)
+    }
+
+    /** ISO-8601 timestamp -> "Today", "Yesterday" or "25 Sep 2026" (e.g. a chat day divider). */
+    fun day(isoTimestamp: String, now: Date = Date()): String {
+        val date = parseIso(isoTimestamp) ?: return ""
+        return when (daysBetween(date, now)) {
+            0 -> "Today"
+            1 -> "Yesterday"
+            else -> SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(date)
+        }
+    }
+
+    private fun parseIso(isoTimestamp: String): Date? {
+        // java.time needs API 26 (minSdk is 24), so drop fractional seconds
+        // and normalise "Z" before parsing with SimpleDateFormat.
+        val normalised = isoTimestamp
+            .replace(Regex("\\.\\d+"), "")
+            .replace(Regex("Z$"), "+00:00")
+        return try {
+            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).parse(normalised)
+        } catch (e: Exception) {
+            null
         }
     }
 
