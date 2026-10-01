@@ -1,6 +1,7 @@
 package com.example.hawk_wallet.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -27,13 +28,18 @@ import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
  * background. Built on Material 3's TopAppBar, so it sits below the status
  * bar (edge-to-edge insets) at the standard 64dp height, and the button
  * and title share one vertical centre line.
+ *
+ * A null [onBackClick] drops the back button, for top-level tab screens
+ * (e.g. the admin bottom-navigation destinations) that have nothing to go
+ * back to. [actions] are optional trailing icons.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HawkBackTopBar(
     title: String,
-    onBackClick: () -> Unit,
-    modifier: Modifier = Modifier
+    onBackClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    actions: @Composable RowScope.() -> Unit = {}
 ) {
     TopAppBar(
         modifier = modifier,
@@ -47,6 +53,7 @@ fun HawkBackTopBar(
             )
         },
         navigationIcon = {
+            if (onBackClick == null) return@TopAppBar
             Surface(
                 onClick = onBackClick,
                 shape = CircleShape,
@@ -64,6 +71,7 @@ fun HawkBackTopBar(
                 )
             }
         },
+        actions = actions,
         colors = TopAppBarDefaults.topAppBarColors(
             // Same background as the screen, so the status-bar area blends in.
             containerColor = MaterialTheme.colorScheme.background,

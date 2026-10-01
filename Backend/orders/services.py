@@ -23,6 +23,7 @@ from django.utils import timezone
 
 from audit.models import AuditEvent, LedgerEntry
 from audit.services import record_audit_event, record_ledger_entry
+from core import listing
 from core.permissions import is_active_admin, is_verified_member
 from orders.calculations import calculate_income_amount, calculate_payout_target
 from orders.exceptions import (
@@ -30,6 +31,7 @@ from orders.exceptions import (
     ClaimConflict,
     ClaimPermissionDenied,
     IdempotencyKeyConflict,
+    InvalidAdminOrderQuery,
     InvalidIdempotencyKey,
     InvalidOffer,
     InvalidOfferFilter,
@@ -428,15 +430,54 @@ def latest_pay_in(order):
 
 # --- admin reads --------------------------------------------------------------
 
-def list_admin_orders(*, admin):
+# Orders on which an admin has a pending operation, derived only from the
+# existing state machine (payins.services, payouts.services):
+# - PAYMENT_UNDER_REVIEW: submitting a pay-in puts the order here with exactly
+#   one UNDER_REVIEW pay-in; confirm / reject moves it out. -> review it.
+# - ACTIVE: the pay-in is confirmed and no payout exists yet (the first payout
+#   moves the order to PAYOUT_IN_PROGRESS). -> create a payout.
+# - PAYOUT_IN_PROGRESS: paid < payout_target (paying the last rupee makes it
+#   COMPLETED), so either a PENDING payout is waiting (mark paid / cancel) or
+#   part of the target is not yet committed (create a payout).
+# PAYMENT_REQUIRED waits on the member; COMPLETED / EXPIRED / CANCELLED are final.
+ORDER_STATUSES_AWAITING_ADMIN_ACTION = (
+    Order.Status.PAYMENT_UNDER_REVIEW,
+    Order.Status.ACTIVE,
+    Order.Status.PAYOUT_IN_PROGRESS,
+)
+
+
+def orders_awaiting_admin_action():
+    return Order.objects.filter(status__in=ORDER_STATUSES_AWAITING_ADMIN_ACTION)
+
+
+def list_admin_orders(*, admin, status=None, awaiting_action=None, search=None, page=None, page_size=None):
     """
-    Return every member's orders for an active admin, newest first (id
-    breaks ties). Read-only. Any active admin may review any order - the
-    same rule as pay-in review and payouts - so there is no per-admin
-    filter. The list carries no payout destination.
+    Return (orders, meta): one page of every member's orders for an active
+    admin, newest first (id breaks ties). Read-only. Any active admin may
+    review any order - the same rule as pay-in review and payouts - so there
+    is no per-admin filter. The list carries no payout destination.
+
+    status: one Order.Status value. awaiting_action: 'true' limits the list
+    to ORDER_STATUSES_AWAITING_ADMIN_ACTION. search: order reference or member
+    name (substring), or - digits only - part of the member's mobile number.
     """
     _require_admin_reader(admin)
-    return Order.objects.select_related('user').order_by('-claimed_at', '-id')
+    queryset = Order.objects.select_related('user').order_by('-claimed_at', '-id')
+    status = listing.choice(status, Order.Status.values, 'status', error=InvalidAdminOrderQuery)
+    if status is not None:
+        queryset = queryset.filter(status=status)
+    if listing.boolean(awaiting_action, 'awaiting_action', error=InvalidAdminOrderQuery):
+        queryset = queryset.filter(status__in=ORDER_STATUSES_AWAITING_ADMIN_ACTION)
+    query = listing.search_q(
+        search,
+        text_fields=('reference', 'user__name'),
+        digit_fields=('user__mobile_number',),
+        error=InvalidAdminOrderQuery,
+    )
+    if query is not None:
+        queryset = queryset.filter(query)
+    return listing.paginate(queryset, page, page_size, error=InvalidAdminOrderQuery)
 
 
 def get_admin_order(*, admin, order_id, ip_address=None):

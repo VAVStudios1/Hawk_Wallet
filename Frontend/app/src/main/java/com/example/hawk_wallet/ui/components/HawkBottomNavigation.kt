@@ -1,6 +1,14 @@
 package com.example.hawk_wallet.ui.components
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.SupportAgent
+import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.SupportAgent
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
@@ -25,11 +33,18 @@ import androidx.compose.ui.unit.dp
 import com.example.hawk_wallet.ui.theme.HawkIndigo
 import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
 
-enum class HawkNavDestination(
-    val label: String,
-    val selectedIcon: ImageVector,
+/** One bottom-navigation tab; shared by the member and admin bars so both look the same. */
+interface HawkNavItem {
+    val label: String
+    val selectedIcon: ImageVector
     val unselectedIcon: ImageVector
-) {
+}
+
+enum class HawkNavDestination(
+    override val label: String,
+    override val selectedIcon: ImageVector,
+    override val unselectedIcon: ImageVector
+) : HawkNavItem {
     HOME(
         label = "Home",
         selectedIcon = Icons.Filled.Home,
@@ -57,10 +72,65 @@ enum class HawkNavDestination(
     )
 }
 
+/**
+ * Admin tabs (ADMIN and SUPER_ADMIN alike; role differences live inside
+ * More).
+ */
+enum class AdminNavDestination(
+    override val label: String,
+    override val selectedIcon: ImageVector,
+    override val unselectedIcon: ImageVector
+) : HawkNavItem {
+    DASHBOARD(
+        label = "Dashboard",
+        selectedIcon = Icons.Filled.Dashboard,
+        unselectedIcon = Icons.Outlined.Dashboard
+    ),
+    ORDERS(
+        label = "Orders",
+        selectedIcon = Icons.Filled.ReceiptLong,
+        unselectedIcon = Icons.Outlined.ReceiptLong
+    ),
+    USERS(
+        label = "Users",
+        selectedIcon = Icons.Filled.People,
+        unselectedIcon = Icons.Outlined.People
+    ),
+    SUPPORT(
+        label = "Support",
+        selectedIcon = Icons.Filled.SupportAgent,
+        unselectedIcon = Icons.Outlined.SupportAgent
+    ),
+    MORE(
+        label = "More",
+        selectedIcon = Icons.Filled.MoreHoriz,
+        unselectedIcon = Icons.Outlined.MoreHoriz
+    )
+}
+
 @Composable
 fun HawkBottomNavigation(
     selected: HawkNavDestination,
     onSelect: (HawkNavDestination) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    HawkNavigationBar(HawkNavDestination.entries, selected, onSelect, modifier)
+}
+
+@Composable
+fun AdminBottomNavigation(
+    selected: AdminNavDestination,
+    onSelect: (AdminNavDestination) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    HawkNavigationBar(AdminNavDestination.entries, selected, onSelect, modifier)
+}
+
+@Composable
+private fun <T : HawkNavItem> HawkNavigationBar(
+    items: List<T>,
+    selected: T,
+    onSelect: (T) -> Unit,
     modifier: Modifier = Modifier
 ) {
     NavigationBar(
@@ -68,7 +138,7 @@ fun HawkBottomNavigation(
         containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 4.dp
     ) {
-        HawkNavDestination.entries.forEach { destination ->
+        items.forEach { destination ->
             val isSelected = destination == selected
 
             NavigationBarItem(
@@ -105,6 +175,17 @@ private fun HawkBottomNavigationPreview() {
     Hawk_WalletTheme {
         HawkBottomNavigation(
             selected = HawkNavDestination.HOME,
+            onSelect = {}
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun AdminBottomNavigationPreview() {
+    Hawk_WalletTheme {
+        AdminBottomNavigation(
+            selected = AdminNavDestination.DASHBOARD,
             onSelect = {}
         )
     }

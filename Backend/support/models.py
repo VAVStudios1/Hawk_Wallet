@@ -22,9 +22,12 @@ MESSAGE_TEXT_MAX_LENGTH = 4000
 
 class Conversation(ImmutableFieldsMixin, UndeletableModel):
     """
-    One support thread of a member. The admin is assigned once, when the
-    conversation starts (see support.services.start_conversation), and never
-    changes; the member never sees or chooses it. A member has at most one
+    One support thread of a member. The admin is assigned when the
+    conversation starts (see support.services.start_conversation); the member
+    never sees or chooses it. The assignment changes in exactly one case: when
+    a SUPER_ADMIN deactivates the assigned admin, support.services.
+    reassign_open_conversations moves the OPEN conversation to another active
+    ADMIN (audited). Ordinary saves still cannot change it (immutable_fields). A member has at most one
     OPEN conversation; once the assigned admin closes it, the member's next
     conversation is a new row.
 

@@ -14,7 +14,10 @@ import androidx.navigation.compose.rememberNavController
 import com.example.hawk_wallet.data.local.SessionManager
 import com.example.hawk_wallet.data.remote.JwtExpiry
 import com.example.hawk_wallet.data.remote.SessionRefresher
+import com.example.hawk_wallet.data.repository.AdminDashboardRepository
+import com.example.hawk_wallet.data.repository.AdminManagementRepository
 import com.example.hawk_wallet.data.repository.AdminOrderRepository
+import com.example.hawk_wallet.data.repository.AdminUserRepository
 import com.example.hawk_wallet.data.repository.AuthRepository
 import com.example.hawk_wallet.data.repository.HomeRepository
 import com.example.hawk_wallet.data.repository.OrderRepository
@@ -35,6 +38,9 @@ fun HawkApp(
     buyMethodRepository: BuyMethodRepository,
     orderRepository: OrderRepository,
     adminOrderRepository: AdminOrderRepository,
+    adminDashboardRepository: AdminDashboardRepository,
+    adminUserRepository: AdminUserRepository,
+    adminManagementRepository: AdminManagementRepository,
     teamRepository: TeamRepository,
     profileRepository: ProfileRepository,
     supportChatRepository: SupportChatRepository,
@@ -64,6 +70,9 @@ fun HawkApp(
                 buyMethodRepository = buyMethodRepository,
                 orderRepository = orderRepository,
                 adminOrderRepository = adminOrderRepository,
+                adminDashboardRepository = adminDashboardRepository,
+                adminUserRepository = adminUserRepository,
+                adminManagementRepository = adminManagementRepository,
                 teamRepository = teamRepository,
                 profileRepository = profileRepository,
                 supportChatRepository = supportChatRepository,

@@ -5,7 +5,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -20,7 +19,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.navigation
 import androidx.navigation.navArgument
 import com.example.hawk_wallet.data.local.SessionManager
+import com.example.hawk_wallet.data.repository.AdminDashboardRepository
+import com.example.hawk_wallet.data.repository.AdminManagementRepository
 import com.example.hawk_wallet.data.repository.AdminOrderRepository
+import com.example.hawk_wallet.data.repository.AdminUserRepository
 import com.example.hawk_wallet.data.repository.AuthRepository
 import com.example.hawk_wallet.data.repository.BuyMethodRepository
 import com.example.hawk_wallet.data.repository.HomeRepository
@@ -29,13 +31,51 @@ import com.example.hawk_wallet.data.repository.PayoutMethodRepository
 import com.example.hawk_wallet.data.repository.ProfileRepository
 import com.example.hawk_wallet.data.repository.SupportChatRepository
 import com.example.hawk_wallet.data.repository.TeamRepository
+import com.example.hawk_wallet.ui.components.AdminBottomNavigation
+import com.example.hawk_wallet.ui.components.AdminNavDestination
 import com.example.hawk_wallet.ui.components.HawkNavDestination
 import com.example.hawk_wallet.ui.model.QuickAction
+import com.example.hawk_wallet.ui.screens.admin.AddAdminScreen
+import com.example.hawk_wallet.ui.screens.admin.AddAdminViewModel
+import com.example.hawk_wallet.ui.screens.admin.AdminAccountDetailScreen
+import com.example.hawk_wallet.ui.screens.admin.AdminAccountDetailViewModel
+import com.example.hawk_wallet.ui.screens.admin.AdminAccountsScreen
+import com.example.hawk_wallet.ui.screens.admin.AdminAccountsViewModel
+import com.example.hawk_wallet.ui.screens.admin.AdminDashboardActions
+import com.example.hawk_wallet.ui.screens.admin.AdminOrderFilter
+import com.example.hawk_wallet.ui.screens.admin.AdminReportsScreen
+import com.example.hawk_wallet.ui.screens.admin.AdminReportsViewModel
+import com.example.hawk_wallet.ui.screens.admin.AuditEventDetailScreen
+import com.example.hawk_wallet.ui.screens.admin.AuditEventDetailViewModel
+import com.example.hawk_wallet.ui.screens.admin.AuditLogScreen
+import com.example.hawk_wallet.ui.screens.admin.AuditLogViewModel
+import com.example.hawk_wallet.ui.screens.admin.SuperAdminOnly
+import com.example.hawk_wallet.ui.screens.admin.SystemReportScreen
+import com.example.hawk_wallet.ui.screens.admin.SystemReportViewModel
+import com.example.hawk_wallet.ui.screens.admin.AdminPayInDetailScreen
+import com.example.hawk_wallet.ui.screens.admin.AdminPayInDetailViewModel
+import com.example.hawk_wallet.ui.screens.admin.AdminPayInFilter
+import com.example.hawk_wallet.ui.screens.admin.AdminPayInsScreen
+import com.example.hawk_wallet.ui.screens.admin.AdminPayInsViewModel
+import com.example.hawk_wallet.ui.screens.admin.AdminPayoutDetailScreen
+import com.example.hawk_wallet.ui.screens.admin.AdminPayoutDetailViewModel
+import com.example.hawk_wallet.ui.screens.admin.AdminPayoutFilter
+import com.example.hawk_wallet.ui.screens.admin.AdminPayoutsScreen
+import com.example.hawk_wallet.ui.screens.admin.AdminPayoutsViewModel
+import com.example.hawk_wallet.ui.screens.admin.AdminUserDetailScreen
+import com.example.hawk_wallet.ui.screens.admin.AdminUserDetailViewModel
+import com.example.hawk_wallet.ui.screens.admin.AdminUsersScreen
+import com.example.hawk_wallet.ui.screens.admin.AdminUsersViewModel
 import com.example.hawk_wallet.ui.screens.admin.AdminDashboardScreen
+import com.example.hawk_wallet.ui.screens.admin.AdminDashboardViewModel
+import com.example.hawk_wallet.ui.screens.admin.AdminMoreItem
+import com.example.hawk_wallet.ui.screens.admin.AdminMoreScreen
 import com.example.hawk_wallet.ui.screens.admin.AdminOrderDetailsScreen
 import com.example.hawk_wallet.ui.screens.admin.AdminOrderDetailsViewModel
 import com.example.hawk_wallet.ui.screens.admin.AdminOrdersScreen
 import com.example.hawk_wallet.ui.screens.admin.AdminOrdersViewModel
+import com.example.hawk_wallet.ui.screens.admin.AdminProfileActions
+import com.example.hawk_wallet.ui.screens.admin.AdminProfileScreen
 import com.example.hawk_wallet.ui.screens.admin.CreateOfferScreen
 import com.example.hawk_wallet.ui.screens.admin.CreateOfferViewModel
 import com.example.hawk_wallet.ui.screens.auth.forgot.ForgotPasswordMobileScreen
@@ -89,7 +129,6 @@ import com.example.hawk_wallet.ui.screens.team.TeamMembersScreen
 import com.example.hawk_wallet.ui.screens.team.TeamMembersViewModel
 import com.example.hawk_wallet.ui.screens.team.TeamScreen
 import com.example.hawk_wallet.ui.screens.team.TeamViewModel
-import kotlinx.coroutines.launch
 
 @Composable
 fun HawkNavHost(
@@ -100,6 +139,9 @@ fun HawkNavHost(
     buyMethodRepository: BuyMethodRepository,
     orderRepository: OrderRepository,
     adminOrderRepository: AdminOrderRepository,
+    adminDashboardRepository: AdminDashboardRepository,
+    adminUserRepository: AdminUserRepository,
+    adminManagementRepository: AdminManagementRepository,
     teamRepository: TeamRepository,
     profileRepository: ProfileRepository,
     supportChatRepository: SupportChatRepository,
@@ -163,6 +205,28 @@ fun HawkNavHost(
         }
     }
     val openSupport = { navController.navigate(HawkRoutes.SUPPORT) { launchSingleTop = true } }
+
+    // Admin tabs are pushed on top of the Dashboard, replacing whichever tab
+    // was open, so back from any tab returns to the Dashboard.
+    val openAdminTab: (String) -> Unit = { route ->
+        navController.navigate(route) {
+            popUpTo(HawkRoutes.ADMIN_DASHBOARD)
+            launchSingleTop = true
+        }
+    }
+    val onAdminBottomNavSelect: (AdminNavDestination) -> Unit = { destination ->
+        when (destination) {
+            AdminNavDestination.DASHBOARD -> navController.popBackStack(HawkRoutes.ADMIN_DASHBOARD, inclusive = false)
+            AdminNavDestination.ORDERS -> openAdminTab(HawkRoutes.adminOrders())
+            AdminNavDestination.SUPPORT -> openAdminTab(HawkRoutes.ADMIN_SUPPORT_INBOX)
+            AdminNavDestination.USERS -> openAdminTab(HawkRoutes.ADMIN_USERS)
+            AdminNavDestination.MORE -> openAdminTab(HawkRoutes.ADMIN_MORE)
+        }
+    }
+    val openAdminProfile = { navController.navigate(HawkRoutes.ADMIN_PROFILE) { launchSingleTop = true } }
+    // Admin detail screens cross-link (pay-in -> order / user, user -> order ...); each is a plain push.
+    val openAdminOrder: (Long) -> Unit = { id -> navController.navigate(HawkRoutes.adminOrderDetails(id)) }
+    val openAdminUser: (Long) -> Unit = { id -> navController.navigate(HawkRoutes.adminUserDetails(id)) }
 
     // Team is pushed on top of Home, replacing whichever tab (e.g. Orders) was open.
     val openTeam = {
@@ -584,35 +648,6 @@ fun HawkNavHost(
             )
         }
 
-        composable(HawkRoutes.ADMIN_DASHBOARD) {
-            val userName by sessionManager.userNameFlow.collectAsState(initial = null)
-            val role by sessionManager.roleFlow.collectAsState(initial = null)
-            val scope = rememberCoroutineScope()
-
-            AdminDashboardScreen(
-                userName = userName.orEmpty(),
-                userRole = role.orEmpty(),
-                onOrdersClick = { navController.navigate(HawkRoutes.ADMIN_ORDERS) { launchSingleTop = true } },
-                onCreateOfferClick = {
-                    navController.navigate(HawkRoutes.ADMIN_CREATE_OFFER) { launchSingleTop = true }
-                },
-                onSupportClick = {
-                    navController.navigate(HawkRoutes.ADMIN_SUPPORT_INBOX) { launchSingleTop = true }
-                },
-                onLogoutClick = {
-                    scope.launch {
-                        // Best effort, as on Profile: revoke this device's
-                        // refresh token, then always clear the local session.
-                        sessionManager.getRefreshToken()?.let { authRepository.logout(it) }
-                        sessionManager.clearSession()
-                        navController.navigate(HawkRoutes.LOGIN) {
-                            popUpTo(navController.graph.id) { inclusive = true }
-                        }
-                    }
-                }
-            )
-        }
-
         composable(HawkRoutes.SUPPORT) {
             val viewModel: SupportChatViewModel = viewModel(
                 factory = viewModelFactory {
@@ -622,69 +657,371 @@ fun HawkNavHost(
             SupportChatScreen(viewModel = viewModel, onBackClick = { navController.popBackStack() })
         }
 
-        composable(HawkRoutes.ADMIN_SUPPORT_INBOX) {
-            val role by sessionManager.roleFlow.collectAsState(initial = null)
-            val viewModel: AdminSupportInboxViewModel = viewModel(
-                factory = viewModelFactory { initializer { AdminSupportInboxViewModel(supportChatRepository) } }
-            )
-            AdminSupportInboxScreen(
-                viewModel = viewModel,
-                isSuperAdmin = role == "SUPER_ADMIN",
-                onBackClick = { navController.popBackStack() },
-                onConversationClick = { id -> navController.navigate(HawkRoutes.adminSupportChat(id)) }
-            )
-        }
+        // ADMIN and SUPER_ADMIN share this graph; destinationForRole() opens it on
+        // the Dashboard. Role differences live inside More and Support, and the
+        // backend authorizes every request whatever the UI shows.
+        navigation(startDestination = HawkRoutes.ADMIN_DASHBOARD, route = HawkRoutes.ADMIN_GRAPH) {
+            composable(HawkRoutes.ADMIN_DASHBOARD) {
+                val userName by sessionManager.userNameFlow.collectAsState(initial = null)
+                val role by sessionManager.roleFlow.collectAsState(initial = null)
+                val viewModel: AdminDashboardViewModel = viewModel(
+                    factory = viewModelFactory { initializer { AdminDashboardViewModel(adminDashboardRepository) } }
+                )
+                AdminDashboardScreen(
+                    viewModel = viewModel,
+                    userName = userName.orEmpty(),
+                    userRole = role.orEmpty(),
+                    actions = AdminDashboardActions(
+                        onProfileClick = openAdminProfile,
+                        onPayInReviewsClick = {
+                            navController.navigate(HawkRoutes.adminPayIns(AdminPayInFilter.UNDER_REVIEW.apiStatus))
+                        },
+                        onPayoutsPendingClick = {
+                            navController.navigate(HawkRoutes.adminPayouts(AdminPayoutFilter.PENDING.apiStatus))
+                        },
+                        onOrdersAwaitingClick = {
+                            openAdminTab(HawkRoutes.adminOrders(AdminOrderFilter.AWAITING_ACTION.name))
+                        },
+                        onSupportClick = { openAdminTab(HawkRoutes.ADMIN_SUPPORT_INBOX) },
+                        onBottomNavSelect = onAdminBottomNavSelect
+                    )
+                )
+            }
 
-        composable(
-            route = HawkRoutes.ADMIN_SUPPORT_CHAT,
-            arguments = listOf(navArgument(HawkRoutes.CONVERSATION_ID_ARG) { type = NavType.StringType })
-        ) { backStackEntry ->
-            val conversationId = backStackEntry.arguments?.getString(HawkRoutes.CONVERSATION_ID_ARG).orEmpty()
-            val role by sessionManager.roleFlow.collectAsState(initial = null)
-            val viewModel: SupportChatViewModel = viewModel(
-                factory = viewModelFactory {
-                    initializer {
-                        SupportChatViewModel(AdminSupportChatSource(supportChatRepository, conversationId), supportChatRepository)
+            composable(
+                route = HawkRoutes.ADMIN_ORDERS,
+                arguments = listOf(navArgument(HawkRoutes.ORDER_FILTER_ARG) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                })
+            ) { backStackEntry ->
+                val initial = AdminOrderFilter.fromRoute(backStackEntry.arguments?.getString(HawkRoutes.ORDER_FILTER_ARG))
+                val viewModel: AdminOrdersViewModel = viewModel(
+                    factory = viewModelFactory { initializer { AdminOrdersViewModel(adminOrderRepository, initial) } }
+                )
+                AdminOrdersScreen(
+                    viewModel = viewModel,
+                    // A top-level tab: no back button; system back returns to the Dashboard.
+                    onBackClick = null,
+                    onOrderClick = { orderId -> navController.navigate(HawkRoutes.adminOrderDetails(orderId)) },
+                    onCreateOfferClick = {
+                        navController.navigate(HawkRoutes.ADMIN_CREATE_OFFER) { launchSingleTop = true }
+                    },
+                    bottomBar = {
+                        AdminBottomNavigation(selected = AdminNavDestination.ORDERS, onSelect = onAdminBottomNavSelect)
                     }
+                )
+            }
+
+            composable(HawkRoutes.ADMIN_SUPPORT_INBOX) {
+                val role by sessionManager.roleFlow.collectAsState(initial = null)
+                val viewModel: AdminSupportInboxViewModel = viewModel(
+                    factory = viewModelFactory { initializer { AdminSupportInboxViewModel(supportChatRepository) } }
+                )
+                AdminSupportInboxScreen(
+                    viewModel = viewModel,
+                    isSuperAdmin = role == "SUPER_ADMIN",
+                    onBackClick = null,
+                    onConversationClick = { id -> navController.navigate(HawkRoutes.adminSupportChat(id)) },
+                    bottomBar = {
+                        AdminBottomNavigation(selected = AdminNavDestination.SUPPORT, onSelect = onAdminBottomNavSelect)
+                    }
+                )
+            }
+
+            composable(HawkRoutes.ADMIN_MORE) {
+                val role by sessionManager.roleFlow.collectAsState(initial = null)
+                AdminMoreScreen(
+                    role = role,
+                    onItemClick = { item ->
+                        when (item) {
+                            AdminMoreItem.PROFILE -> openAdminProfile()
+                            AdminMoreItem.PAYMENTS -> navController.navigate(HawkRoutes.adminPayIns()) { launchSingleTop = true }
+                            AdminMoreItem.PAYOUTS -> navController.navigate(HawkRoutes.adminPayouts()) { launchSingleTop = true }
+                            AdminMoreItem.REPORTS -> navController.navigate(HawkRoutes.ADMIN_REPORTS) { launchSingleTop = true }
+                            AdminMoreItem.ADMINS -> navController.navigate(HawkRoutes.ADMIN_ACCOUNTS) { launchSingleTop = true }
+                            AdminMoreItem.AUDIT_LOG -> navController.navigate(HawkRoutes.ADMIN_AUDIT_LOG) { launchSingleTop = true }
+                            AdminMoreItem.SYSTEM_REPORTS -> navController.navigate(HawkRoutes.ADMIN_SYSTEM_REPORT) { launchSingleTop = true }
+                            // Not available until their implementation phase: no route yet.
+                            else -> Unit
+                        }
+                    },
+                    onBottomNavSelect = onAdminBottomNavSelect
+                )
+            }
+
+            composable(HawkRoutes.ADMIN_PROFILE) { backStackEntry ->
+                val viewModel: ProfileViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer { ProfileViewModel(profileRepository, authRepository, sessionManager) }
+                    }
+                )
+                val handle = backStackEntry.savedStateHandle
+                val pendingMessage by handle.getStateFlow<String?>(HawkRoutes.PROFILE_MESSAGE_KEY, null).collectAsState()
+                AdminProfileScreen(
+                    viewModel = viewModel,
+                    actions = AdminProfileActions(
+                        onBackClick = { navController.popBackStack() },
+                        onPersonalInfoClick = { navController.navigate(HawkRoutes.ADMIN_PERSONAL_INFO) },
+                        // The shared Change Password screen hands its message back via PROFILE_MESSAGE_KEY.
+                        onChangePasswordClick = { navController.navigate(HawkRoutes.PROFILE_CHANGE_PASSWORD) },
+                        // The session is already cleared: start over at Login with nothing behind it.
+                        onLoggedOut = {
+                            navController.navigate(HawkRoutes.LOGIN) {
+                                popUpTo(0)
+                            }
+                        }
+                    ),
+                    pendingMessage = pendingMessage,
+                    onPendingMessageShown = { handle.set<String?>(HawkRoutes.PROFILE_MESSAGE_KEY, null) }
+                )
+            }
+
+            composable(HawkRoutes.ADMIN_PERSONAL_INFO) {
+                val viewModel: PersonalInfoViewModel = viewModel(
+                    factory = viewModelFactory { initializer { PersonalInfoViewModel(profileRepository, sessionManager) } }
+                )
+                PersonalInfoScreen(
+                    viewModel = viewModel,
+                    onBackClick = { navController.popBackStack() },
+                    showReferralCode = false
+                )
+            }
+
+            composable(
+                route = HawkRoutes.ADMIN_SUPPORT_CHAT,
+                arguments = listOf(navArgument(HawkRoutes.CONVERSATION_ID_ARG) { type = NavType.StringType })
+            ) { backStackEntry ->
+                val conversationId = backStackEntry.arguments?.getString(HawkRoutes.CONVERSATION_ID_ARG).orEmpty()
+                val role by sessionManager.roleFlow.collectAsState(initial = null)
+                val viewModel: SupportChatViewModel = viewModel(
+                    factory = viewModelFactory {
+                        initializer {
+                            SupportChatViewModel(AdminSupportChatSource(supportChatRepository, conversationId), supportChatRepository)
+                        }
+                    }
+                )
+                AdminSupportChatScreen(
+                    viewModel = viewModel,
+                    isSuperAdmin = role == "SUPER_ADMIN",
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
+
+            composable(HawkRoutes.ADMIN_CREATE_OFFER) {
+                val viewModel: CreateOfferViewModel = viewModel(
+                    factory = viewModelFactory { initializer { CreateOfferViewModel(adminOrderRepository) } }
+                )
+                CreateOfferScreen(viewModel = viewModel, onBackClick = { navController.popBackStack() })
+            }
+
+            composable(
+                route = HawkRoutes.ADMIN_ORDER_DETAILS,
+                arguments = listOf(navArgument(HawkRoutes.ORDER_ID_ARG) { type = NavType.LongType })
+            ) { backStackEntry ->
+                val orderId = backStackEntry.arguments?.getLong(HawkRoutes.ORDER_ID_ARG) ?: 0L
+                val viewModel: AdminOrderDetailsViewModel = viewModel(
+                    factory = viewModelFactory { initializer { AdminOrderDetailsViewModel(adminOrderRepository, orderId) } }
+                )
+                AdminOrderDetailsScreen(
+                    viewModel = viewModel,
+                    onBackClick = { navController.popBackStack() },
+                    onOpenUser = openAdminUser
+                )
+            }
+
+            composable(HawkRoutes.ADMIN_REPORTS) {
+                val viewModel: AdminReportsViewModel = viewModel(
+                    factory = viewModelFactory { initializer { AdminReportsViewModel(adminManagementRepository) } }
+                )
+                AdminReportsScreen(viewModel = viewModel, onBackClick = { navController.popBackStack() })
+            }
+
+            // SUPER_ADMIN only: each entry is role-gated here, and the backend answers 403 to anyone else.
+            composable(HawkRoutes.ADMIN_ACCOUNTS) {
+                val role by sessionManager.roleFlow.collectAsState(initial = null)
+                SuperAdminOnly(role = role, onBackClick = { navController.popBackStack() }) {
+                    val viewModel: AdminAccountsViewModel = viewModel(
+                        factory = viewModelFactory { initializer { AdminAccountsViewModel(adminManagementRepository) } }
+                    )
+                    AdminAccountsScreen(
+                        viewModel = viewModel,
+                        onBackClick = { navController.popBackStack() },
+                        onAdminClick = { id -> navController.navigate(HawkRoutes.adminAccountDetails(id)) },
+                        onAddAdminClick = { navController.navigate(HawkRoutes.ADMIN_ADD_ACCOUNT) { launchSingleTop = true } }
+                    )
                 }
-            )
-            AdminSupportChatScreen(
-                viewModel = viewModel,
-                isSuperAdmin = role == "SUPER_ADMIN",
-                onBackClick = { navController.popBackStack() }
-            )
-        }
+            }
 
-        composable(HawkRoutes.ADMIN_CREATE_OFFER) {
-            val viewModel: CreateOfferViewModel = viewModel(
-                factory = viewModelFactory { initializer { CreateOfferViewModel(adminOrderRepository) } }
-            )
-            CreateOfferScreen(viewModel = viewModel, onBackClick = { navController.popBackStack() })
-        }
+            composable(HawkRoutes.ADMIN_ADD_ACCOUNT) {
+                val role by sessionManager.roleFlow.collectAsState(initial = null)
+                SuperAdminOnly(role = role, onBackClick = { navController.popBackStack() }) {
+                    val viewModel: AddAdminViewModel = viewModel(
+                        factory = viewModelFactory { initializer { AddAdminViewModel(adminManagementRepository) } }
+                    )
+                    AddAdminScreen(
+                        viewModel = viewModel,
+                        onBackClick = { navController.popBackStack() },
+                        // The new admin's detail replaces the form, so back returns to the list.
+                        onCreated = { id ->
+                            navController.navigate(HawkRoutes.adminAccountDetails(id)) {
+                                popUpTo(HawkRoutes.ADMIN_ADD_ACCOUNT) { inclusive = true }
+                            }
+                        }
+                    )
+                }
+            }
 
-        composable(HawkRoutes.ADMIN_ORDERS) {
-            val viewModel: AdminOrdersViewModel = viewModel(
-                factory = viewModelFactory { initializer { AdminOrdersViewModel(adminOrderRepository) } }
-            )
-            AdminOrdersScreen(
-                viewModel = viewModel,
-                onBackClick = { navController.popBackStack() },
-                onOrderClick = { orderId -> navController.navigate(HawkRoutes.adminOrderDetails(orderId)) }
-            )
-        }
+            composable(
+                route = HawkRoutes.ADMIN_ACCOUNT_DETAILS,
+                arguments = listOf(navArgument(HawkRoutes.ADMIN_ACCOUNT_ID_ARG) { type = NavType.LongType })
+            ) { backStackEntry ->
+                val adminId = backStackEntry.arguments?.getLong(HawkRoutes.ADMIN_ACCOUNT_ID_ARG) ?: 0L
+                val role by sessionManager.roleFlow.collectAsState(initial = null)
+                SuperAdminOnly(role = role, onBackClick = { navController.popBackStack() }) {
+                    val viewModel: AdminAccountDetailViewModel = viewModel(
+                        factory = viewModelFactory { initializer { AdminAccountDetailViewModel(adminManagementRepository, adminId) } }
+                    )
+                    AdminAccountDetailScreen(viewModel = viewModel, onBackClick = { navController.popBackStack() })
+                }
+            }
 
-        composable(
-            route = HawkRoutes.ADMIN_ORDER_DETAILS,
-            arguments = listOf(navArgument(HawkRoutes.ORDER_ID_ARG) { type = NavType.LongType })
-        ) { backStackEntry ->
-            val orderId = backStackEntry.arguments?.getLong(HawkRoutes.ORDER_ID_ARG) ?: 0L
-            val viewModel: AdminOrderDetailsViewModel = viewModel(
-                factory = viewModelFactory { initializer { AdminOrderDetailsViewModel(adminOrderRepository, orderId) } }
-            )
-            AdminOrderDetailsScreen(
-                viewModel = viewModel,
-                onBackClick = { navController.popBackStack() }
-            )
+            composable(HawkRoutes.ADMIN_AUDIT_LOG) {
+                val role by sessionManager.roleFlow.collectAsState(initial = null)
+                SuperAdminOnly(role = role, onBackClick = { navController.popBackStack() }) {
+                    val viewModel: AuditLogViewModel = viewModel(
+                        factory = viewModelFactory { initializer { AuditLogViewModel(adminManagementRepository) } }
+                    )
+                    AuditLogScreen(
+                        viewModel = viewModel,
+                        onBackClick = { navController.popBackStack() },
+                        onEventClick = { id -> navController.navigate(HawkRoutes.adminAuditEventDetails(id)) }
+                    )
+                }
+            }
+
+            composable(
+                route = HawkRoutes.ADMIN_AUDIT_EVENT_DETAILS,
+                arguments = listOf(navArgument(HawkRoutes.AUDIT_EVENT_ID_ARG) { type = NavType.LongType })
+            ) { backStackEntry ->
+                val eventId = backStackEntry.arguments?.getLong(HawkRoutes.AUDIT_EVENT_ID_ARG) ?: 0L
+                val role by sessionManager.roleFlow.collectAsState(initial = null)
+                SuperAdminOnly(role = role, onBackClick = { navController.popBackStack() }) {
+                    val viewModel: AuditEventDetailViewModel = viewModel(
+                        factory = viewModelFactory { initializer { AuditEventDetailViewModel(adminManagementRepository, eventId) } }
+                    )
+                    AuditEventDetailScreen(viewModel = viewModel, onBackClick = { navController.popBackStack() })
+                }
+            }
+
+            composable(HawkRoutes.ADMIN_SYSTEM_REPORT) {
+                val role by sessionManager.roleFlow.collectAsState(initial = null)
+                SuperAdminOnly(role = role, onBackClick = { navController.popBackStack() }) {
+                    val viewModel: SystemReportViewModel = viewModel(
+                        factory = viewModelFactory { initializer { SystemReportViewModel(adminManagementRepository) } }
+                    )
+                    SystemReportScreen(viewModel = viewModel, onBackClick = { navController.popBackStack() })
+                }
+            }
+
+            composable(HawkRoutes.ADMIN_USERS) {
+                val viewModel: AdminUsersViewModel = viewModel(
+                    factory = viewModelFactory { initializer { AdminUsersViewModel(adminUserRepository) } }
+                )
+                AdminUsersScreen(
+                    viewModel = viewModel,
+                    onUserClick = openAdminUser,
+                    bottomBar = {
+                        AdminBottomNavigation(selected = AdminNavDestination.USERS, onSelect = onAdminBottomNavSelect)
+                    }
+                )
+            }
+
+            composable(
+                route = HawkRoutes.ADMIN_USER_DETAILS,
+                arguments = listOf(navArgument(HawkRoutes.USER_ID_ARG) { type = NavType.LongType })
+            ) { backStackEntry ->
+                val userId = backStackEntry.arguments?.getLong(HawkRoutes.USER_ID_ARG) ?: 0L
+                val viewModel: AdminUserDetailViewModel = viewModel(
+                    factory = viewModelFactory { initializer { AdminUserDetailViewModel(adminUserRepository, userId) } }
+                )
+                AdminUserDetailScreen(
+                    viewModel = viewModel,
+                    onBackClick = { navController.popBackStack() },
+                    onOpenOrder = openAdminOrder
+                )
+            }
+
+            composable(
+                route = HawkRoutes.ADMIN_PAY_INS,
+                arguments = listOf(navArgument(HawkRoutes.STATUS_ARG) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                })
+            ) { backStackEntry ->
+                val initial = AdminPayInFilter.fromApi(backStackEntry.arguments?.getString(HawkRoutes.STATUS_ARG))
+                val viewModel: AdminPayInsViewModel = viewModel(
+                    factory = viewModelFactory { initializer { AdminPayInsViewModel(adminOrderRepository, initial) } }
+                )
+                AdminPayInsScreen(
+                    viewModel = viewModel,
+                    onBackClick = { navController.popBackStack() },
+                    onPayInClick = { id -> navController.navigate(HawkRoutes.adminPayInDetails(id)) }
+                )
+            }
+
+            composable(
+                route = HawkRoutes.ADMIN_PAY_IN_DETAILS,
+                arguments = listOf(navArgument(HawkRoutes.PAY_IN_ID_ARG) { type = NavType.LongType })
+            ) { backStackEntry ->
+                val payInId = backStackEntry.arguments?.getLong(HawkRoutes.PAY_IN_ID_ARG) ?: 0L
+                val viewModel: AdminPayInDetailViewModel = viewModel(
+                    factory = viewModelFactory { initializer { AdminPayInDetailViewModel(adminOrderRepository, payInId) } }
+                )
+                AdminPayInDetailScreen(
+                    viewModel = viewModel,
+                    onBackClick = { navController.popBackStack() },
+                    onOpenOrder = openAdminOrder,
+                    onOpenUser = openAdminUser
+                )
+            }
+
+            composable(
+                route = HawkRoutes.ADMIN_PAYOUTS,
+                arguments = listOf(navArgument(HawkRoutes.STATUS_ARG) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                })
+            ) { backStackEntry ->
+                val initial = AdminPayoutFilter.fromApi(backStackEntry.arguments?.getString(HawkRoutes.STATUS_ARG))
+                val viewModel: AdminPayoutsViewModel = viewModel(
+                    factory = viewModelFactory { initializer { AdminPayoutsViewModel(adminOrderRepository, initial) } }
+                )
+                AdminPayoutsScreen(
+                    viewModel = viewModel,
+                    onBackClick = { navController.popBackStack() },
+                    onPayoutClick = { id -> navController.navigate(HawkRoutes.adminPayoutDetails(id)) }
+                )
+            }
+
+            composable(
+                route = HawkRoutes.ADMIN_PAYOUT_DETAILS,
+                arguments = listOf(navArgument(HawkRoutes.PAYOUT_ID_ARG) { type = NavType.LongType })
+            ) { backStackEntry ->
+                val payoutId = backStackEntry.arguments?.getLong(HawkRoutes.PAYOUT_ID_ARG) ?: 0L
+                val viewModel: AdminPayoutDetailViewModel = viewModel(
+                    factory = viewModelFactory { initializer { AdminPayoutDetailViewModel(adminOrderRepository, payoutId) } }
+                )
+                AdminPayoutDetailScreen(
+                    viewModel = viewModel,
+                    onBackClick = { navController.popBackStack() },
+                    onOpenOrder = openAdminOrder,
+                    onOpenUser = openAdminUser
+                )
+            }
         }
     }
 }

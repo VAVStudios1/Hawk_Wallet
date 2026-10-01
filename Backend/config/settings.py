@@ -152,6 +152,10 @@ USE_I18N = True
 
 USE_TZ = True
 
+# Business days for admin reports and audit-log date filters. Only how
+# calendar dates are turned into datetime ranges; stored timestamps stay UTC.
+REPORTING_TIME_ZONE = 'Asia/Kolkata'
+
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/

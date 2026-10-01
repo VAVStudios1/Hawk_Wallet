@@ -6,7 +6,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.example.hawk_wallet.data.local.SessionManager
 import com.example.hawk_wallet.data.remote.NetworkModule
+import com.example.hawk_wallet.data.repository.AdminDashboardRepository
+import com.example.hawk_wallet.data.repository.AdminManagementRepository
 import com.example.hawk_wallet.data.repository.AdminOrderRepository
+import com.example.hawk_wallet.data.repository.AdminUserRepository
 import com.example.hawk_wallet.data.repository.AuthRepository
 import com.example.hawk_wallet.data.repository.BuyMethodRepository
 import com.example.hawk_wallet.data.repository.ContentResolverQrImageReader
@@ -44,6 +47,9 @@ class MainActivity : ComponentActivity() {
             NetworkModule.provideAdminOrderApi(sessionManager),
             qrImageReader
         )
+        val adminDashboardRepository = AdminDashboardRepository(NetworkModule.provideAdminDashboardApi(sessionManager))
+        val adminUserRepository = AdminUserRepository(NetworkModule.provideAdminUserApi(sessionManager))
+        val adminManagementRepository = AdminManagementRepository(NetworkModule.provideAdminManagementApi(sessionManager))
         val teamRepository = TeamRepository(NetworkModule.provideTeamApi(sessionManager))
         val profileRepository = ProfileRepository(NetworkModule.provideProfileApi(sessionManager))
         val supportChatRepository = SupportChatRepository(
@@ -60,6 +66,9 @@ class MainActivity : ComponentActivity() {
                     buyMethodRepository = buyMethodRepository,
                     orderRepository = orderRepository,
                     adminOrderRepository = adminOrderRepository,
+                    adminDashboardRepository = adminDashboardRepository,
+                    adminUserRepository = adminUserRepository,
+                    adminManagementRepository = adminManagementRepository,
                     teamRepository = teamRepository,
                     profileRepository = profileRepository,
                     supportChatRepository = supportChatRepository,

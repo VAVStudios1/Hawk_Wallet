@@ -82,6 +82,11 @@ class OrderNotFound(OrderReadError):
     default_message = 'Order not found.'
 
 
+class InvalidAdminOrderQuery(OrderReadError):
+    code = 'invalid_query'
+    default_message = 'The order list query is invalid.'
+
+
 class InvalidOfferFilter(OrderReadError):
     code = 'invalid_amount_filter'
     default_message = 'min_amount and max_amount must be whole rupees (0-9999999999).'

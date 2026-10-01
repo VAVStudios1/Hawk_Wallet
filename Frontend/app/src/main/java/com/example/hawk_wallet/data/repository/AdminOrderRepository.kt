@@ -3,6 +3,11 @@ package com.example.hawk_wallet.data.repository
 import com.example.hawk_wallet.data.remote.api.AdminOrderApi
 import com.example.hawk_wallet.data.remote.model.AdminOfferDto
 import com.example.hawk_wallet.data.remote.model.AdminOrderDto
+import com.example.hawk_wallet.data.remote.model.AdminOrderListData
+import com.example.hawk_wallet.data.remote.model.AdminPayInItemDto
+import com.example.hawk_wallet.data.remote.model.AdminPayInListData
+import com.example.hawk_wallet.data.remote.model.AdminPayoutItemDto
+import com.example.hawk_wallet.data.remote.model.AdminPayoutListData
 import com.example.hawk_wallet.data.remote.model.CancelPayoutRequest
 import com.example.hawk_wallet.data.remote.model.ConfirmPayInRequest
 import com.example.hawk_wallet.data.remote.model.CreatePayoutRequest
@@ -27,11 +32,28 @@ class AdminOrderRepository(
     private val qrImageReader: QrImageReader
 ) {
 
-    suspend fun orders(): ApiResult<List<AdminOrderDto>> =
-        when (val result = safeApiCall { api.orders() }) {
-            is ApiResult.Success -> ApiResult.Success(result.data.orders, result.message)
-            is ApiResult.Error -> result
+    /** One page of orders; filtering, search and paging all happen on the server. */
+    suspend fun orders(status: String?, awaitingAction: Boolean, search: String?, page: Int): ApiResult<AdminOrderListData> =
+        safeApiCall {
+            api.orders(
+                status = status,
+                awaitingAction = if (awaitingAction) "true" else null,
+                search = search?.ifBlank { null },
+                page = page
+            )
         }
+
+    suspend fun payIns(status: String?, search: String?, page: Int): ApiResult<AdminPayInListData> =
+        safeApiCall { api.payIns(status = status, search = search?.ifBlank { null }, page = page) }
+
+    /** Audited by the backend (the detail reveals the member's BUY account). */
+    suspend fun payIn(id: Long): ApiResult<AdminPayInItemDto> = safeApiCall { api.payIn(id) }
+
+    suspend fun payouts(status: String?, search: String?, page: Int): ApiResult<AdminPayoutListData> =
+        safeApiCall { api.payouts(status = status, search = search?.ifBlank { null }, page = page) }
+
+    /** Audited by the backend (the detail reveals the member's UPI ID). */
+    suspend fun payout(id: Long): ApiResult<AdminPayoutItemDto> = safeApiCall { api.payout(id) }
 
     suspend fun order(id: Long): ApiResult<AdminOrderDto> = safeApiCall { api.order(id) }
 

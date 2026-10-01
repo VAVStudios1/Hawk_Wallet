@@ -48,13 +48,18 @@ import com.example.hawk_wallet.ui.screens.orders.ScreenHorizontalPadding
 import com.example.hawk_wallet.ui.theme.HawkIndigo
 import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
 
-/** Admin support inbox: open / closed conversations with unread counts. */
+/**
+ * Admin support inbox: open / closed conversations with unread counts. As an
+ * admin bottom-navigation tab it has no back button ([onBackClick] null) and
+ * shows [bottomBar].
+ */
 @Composable
 fun AdminSupportInboxScreen(
     viewModel: AdminSupportInboxViewModel,
     isSuperAdmin: Boolean,
-    onBackClick: () -> Unit,
-    onConversationClick: (conversationId: String) -> Unit
+    onBackClick: (() -> Unit)?,
+    onConversationClick: (conversationId: String) -> Unit,
+    bottomBar: @Composable () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -68,7 +73,8 @@ fun AdminSupportInboxScreen(
         onRefresh = viewModel::refresh,
         onFilterSelect = viewModel::selectFilter,
         onLoadMore = viewModel::loadMore,
-        onConversationClick = onConversationClick
+        onConversationClick = onConversationClick,
+        bottomBar = bottomBar
     )
 }
 
@@ -77,15 +83,17 @@ fun AdminSupportInboxScreen(
 private fun AdminSupportInboxContent(
     uiState: AdminSupportInboxUiState,
     isSuperAdmin: Boolean,
-    onBackClick: () -> Unit,
+    onBackClick: (() -> Unit)?,
     onRefresh: () -> Unit,
     onFilterSelect: (InboxFilter) -> Unit,
     onLoadMore: () -> Unit,
-    onConversationClick: (String) -> Unit
+    onConversationClick: (String) -> Unit,
+    bottomBar: @Composable () -> Unit = {}
 ) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { HawkBackTopBar(title = "Support", onBackClick = onBackClick) }
+        topBar = { HawkBackTopBar(title = "Support", onBackClick = onBackClick) },
+        bottomBar = bottomBar
     ) { innerPadding ->
         Column(
             modifier = Modifier

@@ -54,7 +54,9 @@ private const val NAME_MAX_LENGTH = 150
 @Composable
 fun PersonalInfoScreen(
     viewModel: PersonalInfoViewModel,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    /** Referral codes are a member feature; admin screens turn the row off. */
+    showReferralCode: Boolean = true
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -72,7 +74,8 @@ fun PersonalInfoScreen(
         onBackClick = onBackClick,
         onRetry = viewModel::load,
         onNameChange = viewModel::onNameChange,
-        onSave = viewModel::save
+        onSave = viewModel::save,
+        showReferralCode = showReferralCode
     )
 }
 
@@ -83,7 +86,8 @@ private fun PersonalInfoContent(
     onBackClick: () -> Unit,
     onRetry: () -> Unit,
     onNameChange: (String) -> Unit,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    showReferralCode: Boolean = true
 ) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -100,6 +104,7 @@ private fun PersonalInfoContent(
                 profile = profile,
                 onNameChange = onNameChange,
                 onSave = onSave,
+                showReferralCode = showReferralCode,
                 modifier = screenModifier
             )
             uiState.isLoading || uiState.loadError == null -> CenteredLoading(screenModifier)
@@ -120,6 +125,7 @@ private fun PersonalInfoForm(
     profile: ProfileUi,
     onNameChange: (String) -> Unit,
     onSave: () -> Unit,
+    showReferralCode: Boolean,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -166,9 +172,11 @@ private fun PersonalInfoForm(
                             color = if (profile.isVerified) HawkEmerald else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    RowDivider()
-                    ProfileInfoRow(icon = Icons.Outlined.CardGiftcard, label = "Referral Code") {
-                        InfoValue(profile.referralCode)
+                    if (showReferralCode) {
+                        RowDivider()
+                        ProfileInfoRow(icon = Icons.Outlined.CardGiftcard, label = "Referral Code") {
+                            InfoValue(profile.referralCode)
+                        }
                     }
                 }
             }

@@ -64,3 +64,19 @@ class IsActiveAdmin(BasePermission):
 
     def has_permission(self, request, view):
         return is_active_admin(request.user)
+
+
+def is_super_admin(user):
+    """True for an active SUPER_ADMIN - the only role that may manage admins and read the audit log."""
+    return bool(
+        getattr(user, 'is_authenticated', False)
+        and user.is_active
+        and user.role == User.Role.SUPER_ADMIN
+    )
+
+
+class IsSuperAdmin(BasePermission):
+    """API gate for SUPER_ADMIN-only endpoints; same rule as is_super_admin()."""
+
+    def has_permission(self, request, view):
+        return is_super_admin(request.user)

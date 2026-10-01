@@ -26,6 +26,7 @@ from django.utils import timezone
 
 from audit.models import AuditEvent, LedgerEntry
 from audit.services import record_audit_event, record_ledger_entry
+from core import listing
 from core.permissions import is_active_admin
 from orders.models import Order
 from payins.models import PayIn
@@ -34,6 +35,7 @@ from payouts.exceptions import (
     InvalidCancellationReason,
     InvalidIdempotencyKey,
     InvalidPayoutAmount,
+    InvalidPayoutQuery,
     InvalidPayoutUtr,
     OrderNotInPayout,
     OrderNotPayable,
@@ -527,3 +529,69 @@ def _as_pk(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+# --- admin reads ---------------------------------------------------------------
+
+ADMIN_PAYOUT_ORDERINGS = {
+    '-created_at': ('-created_at', '-id'),
+    'created_at': ('created_at', 'id'),
+}
+
+
+def list_admin_payouts(*, admin, status=None, search=None, ordering=None, page=None, page_size=None):
+    """
+    Return (payouts, meta): one page of every payout for an active admin.
+    Read-only, and platform-wide - the same rule as the payout actions. The
+    list names the provider but carries no UPI ID (detail-only, audited).
+
+    status: one Payout.Status value. search: order reference or member name
+    (substring), or - digits only - part of the member's mobile number or the
+    UTR. ordering: -created_at (default, newest first) or created_at.
+    """
+    if not is_active_admin(admin):
+        raise PayoutPermissionDenied('Only active admins can view payouts.')
+    queryset = Payout.objects.select_related('order', 'user')
+    status = listing.choice(status, Payout.Status.values, 'status', error=InvalidPayoutQuery)
+    if status is not None:
+        queryset = queryset.filter(status=status)
+    query = listing.search_q(
+        search,
+        text_fields=('order__reference', 'user__name'),
+        digit_fields=('user__mobile_number', 'utr'),
+        error=InvalidPayoutQuery,
+    )
+    if query is not None:
+        queryset = queryset.filter(query)
+    ordering = listing.choice(ordering, tuple(ADMIN_PAYOUT_ORDERINGS), 'ordering', error=InvalidPayoutQuery)
+    queryset = queryset.order_by(*ADMIN_PAYOUT_ORDERINGS[ordering or '-created_at'])
+    return listing.paginate(queryset, page, page_size, error=InvalidPayoutQuery)
+
+
+def get_admin_payout(*, admin, payout_id, ip_address=None):
+    """
+    Return payout `payout_id` for an active admin; unknown ids raise
+    PayoutNotFound. Read-only for financial state. Because the detail
+    reveals the member's UPI ID, each call records one PAYOUT_METHOD_VIEWED
+    AuditEvent, as get_payout_method_for_admin does.
+    """
+    if not is_active_admin(admin):
+        raise PayoutPermissionDenied('Only active admins can view payouts.')
+    pk = _as_pk(payout_id)
+    payout = (
+        Payout.objects.select_related('order', 'user', 'payout_method', 'created_by', 'paid_by')
+        .filter(pk=pk)
+        .first()
+        if pk
+        else None
+    )
+    if payout is None:
+        raise PayoutNotFound()
+    record_audit_event(
+        actor=admin,
+        action=AuditEvent.Action.PAYOUT_METHOD_VIEWED,
+        target=payout.payout_method,
+        ip_address=ip_address,
+        metadata={'payout_id': payout.pk, 'order_id': payout.order_id},
+    )
+    return payout

@@ -1,7 +1,7 @@
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
 
-from core.api import ServiceAPIView
+from core.api import ServiceAPIView, client_ip
 from core.permissions import IsActiveAdmin, IsVerifiedMember
 from core.utils import error_response, success_response
 from payins.exceptions import (
@@ -10,6 +10,7 @@ from payins.exceptions import (
     IdempotencyKeyConflict,
     InvalidIdempotencyKey,
     InvalidPayInIntent,
+    InvalidPayInQuery,
     InvalidRejectionReason,
     InvalidUtr,
     NoReceivingAccount,
@@ -24,7 +25,10 @@ from payins.exceptions import (
     ReviewPermissionDenied,
     UtrAlreadySubmitted,
 )
+from payins.models import PayIn
 from payins.serializers import (
+    AdminPayInDetailSerializer,
+    AdminPayInListSerializer,
     AdminPayInSerializer,
     PayInIntentSerializer,
     PayInSerializer,
@@ -32,7 +36,14 @@ from payins.serializers import (
     ReviewPayInSerializer,
     SubmitPayInSerializer,
 )
-from payins.services import confirm_pay_in, get_pay_in_intent, reject_pay_in, submit_pay_in_utr
+from payins.services import (
+    confirm_pay_in,
+    get_admin_pay_in,
+    get_pay_in_intent,
+    list_admin_pay_ins,
+    reject_pay_in,
+    submit_pay_in_utr,
+)
 
 ERROR_STATUS = {
     PayInPermissionDenied: status.HTTP_403_FORBIDDEN,
@@ -53,6 +64,7 @@ ERROR_STATUS = {
     PayInNotFound: status.HTTP_404_NOT_FOUND,
     PayInAlreadyReviewed: status.HTTP_409_CONFLICT,
     InvalidRejectionReason: status.HTTP_400_BAD_REQUEST,
+    InvalidPayInQuery: status.HTTP_400_BAD_REQUEST,
 }
 
 
@@ -134,3 +146,38 @@ class RejectPayInView(AdminPayInAPIView):
             idempotency_key=data['idempotency_key'],
         )
         return success_response('Pay-in rejected.', data=AdminPayInSerializer(payin).data)
+
+
+class AdminPayInsView(AdminPayInAPIView):
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('status', str, enum=list(PayIn.Status.values), description='Only this status.'),
+            OpenApiParameter('search', str, description='Order reference or member name; digits also match mobile / UTR.'),
+            OpenApiParameter('ordering', str, enum=['-submitted_at', 'submitted_at']),
+            OpenApiParameter('page', int, description='1-based page number.'),
+            OpenApiParameter('page_size', int, description='1-100; default 20.'),
+        ],
+        responses={200: AdminPayInListSerializer(many=True)},
+    )
+    def get(self, request):
+        params = request.query_params
+        pay_ins, meta = list_admin_pay_ins(
+            admin=request.user,
+            status=params.get('status'),
+            search=params.get('search'),
+            ordering=params.get('ordering'),
+            page=params.get('page'),
+            page_size=params.get('page_size'),
+        )
+        return success_response(
+            'Pay-ins.',
+            data={'pay_ins': AdminPayInListSerializer(pay_ins, many=True).data, **meta},
+        )
+
+
+class AdminPayInDetailView(AdminPayInAPIView):
+    @extend_schema(responses={200: AdminPayInDetailSerializer})
+    def get(self, request, payin_id):
+        # Audited (BUY_METHOD_VIEWED) when the pay-in names the member's BUY account.
+        payin = get_admin_pay_in(admin=request.user, payin_id=payin_id, ip_address=client_ip(request))
+        return success_response('Pay-in.', data=AdminPayInDetailSerializer(payin).data)

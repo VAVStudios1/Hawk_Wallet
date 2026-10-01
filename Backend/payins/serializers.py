@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from core.admin_serializers import AdminMemberSummarySerializer
 from paymethods.serializers import BuyMethodSummarySerializer
 from payins.models import PayIn
 
@@ -81,3 +82,46 @@ class AdminPayInSerializer(PayInSerializer):
     class Meta(PayInSerializer.Meta):
         fields = PayInSerializer.Meta.fields + ['order_status', 'reviewed_by', 'reviewed_at']
         read_only_fields = fields
+
+
+class AdminPayInOrderSerializer(serializers.Serializer):
+    """The order a pay-in is for, with its stored amounts (never recomputed)."""
+
+    id = serializers.IntegerField()
+    reference = serializers.CharField()
+    status = serializers.CharField()
+    order_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    payout_target = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class AdminPayInListSerializer(serializers.ModelSerializer):
+    """A pay-in in the admin review list. No BUY-method details: those are detail-only (audited)."""
+
+    order = AdminPayInOrderSerializer(read_only=True)
+    member = AdminMemberSummarySerializer(source='user', read_only=True)
+
+    class Meta:
+        model = PayIn
+        fields = ['id', 'status', 'amount', 'utr', 'submitted_at', 'reviewed_at', 'order', 'member']
+        read_only_fields = fields
+
+
+class AdminPayInDetailSerializer(AdminPayInListSerializer):
+    """
+    One pay-in for review. payee_vpa is the receiving account the member says
+    they paid; buy_method is the member's own account the money came from
+    (null on older pay-ins).
+    """
+
+    payee_vpa = serializers.CharField(source='payee_vpa_snapshot', read_only=True)
+    buy_method = BuyMethodSummarySerializer(read_only=True, allow_null=True)
+    reviewed_by_name = serializers.SerializerMethodField()
+
+    class Meta(AdminPayInListSerializer.Meta):
+        fields = AdminPayInListSerializer.Meta.fields + [
+            'payee_vpa', 'buy_method', 'rejection_reason', 'reviewed_by_name', 'updated_at',
+        ]
+        read_only_fields = fields
+
+    def get_reviewed_by_name(self, payin) -> str | None:
+        return payin.reviewed_by.name if payin.reviewed_by is not None else None

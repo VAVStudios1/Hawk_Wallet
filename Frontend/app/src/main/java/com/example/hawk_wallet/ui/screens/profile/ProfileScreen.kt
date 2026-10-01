@@ -203,7 +203,7 @@ private fun ProfileContent(
 }
 
 @Composable
-private fun LogoutDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+internal fun LogoutDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Log Out") },

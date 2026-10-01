@@ -1,14 +1,10 @@
 from rest_framework import serializers
 
+from core.utils import mask_mobile
 from team.models import Commission
 
 MONEY = {'max_digits': 12, 'decimal_places': 2}
 RATE = {'max_digits': 6, 'decimal_places': 4}
-
-
-def mask_mobile(mobile_number):
-    # Team views never reveal a member's full mobile number: ******3210.
-    return '*' * (len(mobile_number) - 4) + mobile_number[-4:] if mobile_number else ''
 
 
 class ReferralInfoSerializer(serializers.Serializer):

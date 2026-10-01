@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from core.admin_serializers import AdminMemberSummarySerializer, money
 from payouts.models import Payout
 
 
@@ -79,3 +80,58 @@ class AdminPayoutMethodSerializer(serializers.Serializer):
     upi_id = serializers.CharField()
     qr_image = serializers.CharField()
     qr_sha256 = serializers.CharField()
+
+
+class AdminPayoutOrderSerializer(serializers.Serializer):
+    """
+    The order a payout settles, with its stored totals. remaining_to_commit
+    is payout_target - payout_committed_total, the same figure the admin order
+    detail shows (what new payouts may still commit).
+    """
+
+    id = serializers.IntegerField()
+    reference = serializers.CharField()
+    status = serializers.CharField()
+    payout_target = serializers.DecimalField(max_digits=12, decimal_places=2)
+    payout_committed_total = serializers.DecimalField(max_digits=12, decimal_places=2)
+    payout_paid_total = serializers.DecimalField(max_digits=12, decimal_places=2)
+    remaining_to_commit = serializers.SerializerMethodField()
+
+    def get_remaining_to_commit(self, order) -> str:
+        return money(order.payout_target - order.payout_committed_total)
+
+
+class AdminPayoutListSerializer(serializers.ModelSerializer):
+    """A payout in the admin list: provider only, no UPI ID (detail-only, audited)."""
+
+    provider_code = serializers.CharField(source='provider_code_snapshot', read_only=True)
+    provider_name = serializers.CharField(source='provider_name_snapshot', read_only=True)
+    order = AdminPayoutOrderSerializer(read_only=True)
+    member = AdminMemberSummarySerializer(source='user', read_only=True)
+
+    class Meta:
+        model = Payout
+        fields = ['id', 'status', 'amount', 'provider_code', 'provider_name', 'created_at', 'paid_at', 'order', 'member']
+        read_only_fields = fields
+
+
+class AdminPayoutDetailSerializer(AdminPayoutListSerializer):
+    """
+    One payout: its destination snapshot (where the money goes), UTR once
+    PAID, and the cancellation reason once CANCELLED. The QR is served only by
+    the audited payout QR endpoint.
+    """
+
+    upi_id = serializers.CharField(source='upi_id_snapshot', read_only=True)
+    cancellation_reason = serializers.CharField(source='note', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.name', read_only=True)
+    paid_by_name = serializers.SerializerMethodField()
+
+    class Meta(AdminPayoutListSerializer.Meta):
+        fields = AdminPayoutListSerializer.Meta.fields + [
+            'upi_id', 'utr', 'cancellation_reason', 'created_by_name', 'paid_by_name', 'updated_at',
+        ]
+        read_only_fields = fields
+
+    def get_paid_by_name(self, payout) -> str | None:
+        return payout.paid_by.name if payout.paid_by is not None else None

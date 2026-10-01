@@ -53,18 +53,62 @@ object HawkRoutes {
     /** Profile back-stack entry key: a one-shot snackbar message from a sub-screen. */
     const val PROFILE_MESSAGE_KEY = "profile_message"
 
-    // Admin: dashboard -> all orders -> one order (pay-in review); dashboard -> create offer.
-    const val ADMIN_ORDERS = "admin_orders"
+    // Admin: one nested graph for ADMIN and SUPER_ADMIN. Its bottom-navigation
+    // tabs are Dashboard (the graph's start), Orders, Users, Support and More;
+    // Profile, Pay-In Review and Payouts open from More. Orders -> one order
+    // (pay-in review, payouts) / create offer.
+    const val ADMIN_GRAPH = "admin"
+    const val ADMIN_MORE = "admin_more"
+    const val ADMIN_PROFILE = "admin_profile"
+    const val ADMIN_PERSONAL_INFO = "admin_personal_info"
+    // Orders tab; ORDER_FILTER_ARG optionally preselects an AdminOrderFilter (e.g. AWAITING_ACTION).
+    const val ORDER_FILTER_ARG = "filter"
+    const val ADMIN_ORDERS = "admin_orders?$ORDER_FILTER_ARG={$ORDER_FILTER_ARG}"
     const val ADMIN_CREATE_OFFER = "admin_create_offer"
     const val ADMIN_ORDER_DETAILS = "admin_order_details/{$ORDER_ID_ARG}"
 
     fun adminOrderDetails(orderId: Long) = "admin_order_details/$orderId"
+    fun adminOrders(filter: String? = null) = if (filter == null) "admin_orders" else "admin_orders?$ORDER_FILTER_ARG=$filter"
+
+    // Admin operations lists. STATUS_ARG is an optional backend status value
+    // that preselects a filter (e.g. the Dashboard's Pay-In Reviews -> UNDER_REVIEW).
+    const val STATUS_ARG = "status"
+    const val ADMIN_PAY_INS = "admin_pay_ins?$STATUS_ARG={$STATUS_ARG}"
+    const val PAY_IN_ID_ARG = "payInId"
+    const val ADMIN_PAY_IN_DETAILS = "admin_pay_in_details/{$PAY_IN_ID_ARG}"
+    const val ADMIN_PAYOUTS = "admin_payouts?$STATUS_ARG={$STATUS_ARG}"
+    const val PAYOUT_ID_ARG = "payoutId"
+    const val ADMIN_PAYOUT_DETAILS = "admin_payout_details/{$PAYOUT_ID_ARG}"
+    const val ADMIN_USERS = "admin_users"
+    const val USER_ID_ARG = "userId"
+    const val ADMIN_USER_DETAILS = "admin_user_details/{$USER_ID_ARG}"
+
+    fun adminPayIns(status: String? = null) = if (status == null) "admin_pay_ins" else "admin_pay_ins?$STATUS_ARG=$status"
+    fun adminPayInDetails(payInId: Long) = "admin_pay_in_details/$payInId"
+    fun adminPayouts(status: String? = null) = if (status == null) "admin_payouts" else "admin_payouts?$STATUS_ARG=$status"
+    fun adminPayoutDetails(payoutId: Long) = "admin_payout_details/$payoutId"
+    fun adminUserDetails(userId: Long) = "admin_user_details/$userId"
+
+    // Reports (ADMIN and SUPER_ADMIN) and the SUPER_ADMIN-only management screens,
+    // each opened from More. The SUPER_ADMIN routes are also role-gated on entry.
+    const val ADMIN_REPORTS = "admin_reports"
+    const val ADMIN_ACCOUNTS = "admin_accounts"
+    const val ADMIN_ADD_ACCOUNT = "admin_add_account"
+    const val ADMIN_ACCOUNT_ID_ARG = "adminId"
+    const val ADMIN_ACCOUNT_DETAILS = "admin_account_details/{$ADMIN_ACCOUNT_ID_ARG}"
+    const val ADMIN_AUDIT_LOG = "admin_audit_log"
+    const val AUDIT_EVENT_ID_ARG = "eventId"
+    const val ADMIN_AUDIT_EVENT_DETAILS = "admin_audit_event_details/{$AUDIT_EVENT_ID_ARG}"
+    const val ADMIN_SYSTEM_REPORT = "admin_system_report"
+
+    fun adminAccountDetails(adminId: Long) = "admin_account_details/$adminId"
+    fun adminAuditEventDetails(eventId: Long) = "admin_audit_event_details/$eventId"
 
     // Support chat. Member: one screen (start, then the conversation); the
     // backend always uses their own conversation, so the route has no id.
     const val SUPPORT = "support"
 
-    // Admin support: dashboard -> inbox -> one conversation (by its public id).
+    // Admin support: Support tab (inbox) -> one conversation (by its public id).
     const val ADMIN_SUPPORT_INBOX = "admin_support_inbox"
     const val CONVERSATION_ID_ARG = "conversationId"
     const val ADMIN_SUPPORT_CHAT = "admin_support_chat/{$CONVERSATION_ID_ARG}"
@@ -78,7 +122,7 @@ object HawkRoutes {
 
     // Mirrors the backend's User.Role values (core/models.py) exactly.
     fun destinationForRole(role: String?): String = when (role) {
-        "ADMIN", "SUPER_ADMIN" -> ADMIN_DASHBOARD
+        "ADMIN", "SUPER_ADMIN" -> ADMIN_GRAPH
         else -> HOME
     }
 }

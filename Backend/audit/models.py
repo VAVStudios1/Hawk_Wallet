@@ -114,6 +114,10 @@ class AuditEvent(AppendOnlyModel):
         RECEIVING_ACCOUNT_CHANGED = 'RECEIVING_ACCOUNT_CHANGED', 'Receiving account changed'
         OFFER_CHANGED = 'OFFER_CHANGED', 'Offer changed'
         ROLE_CHANGED = 'ROLE_CHANGED', 'Role changed'
+        # Admin management by a SUPER_ADMIN; target is the admin account.
+        ADMIN_CREATED = 'ADMIN_CREATED', 'Admin created'
+        ADMIN_ACTIVATED = 'ADMIN_ACTIVATED', 'Admin activated'
+        ADMIN_DEACTIVATED = 'ADMIN_DEACTIVATED', 'Admin deactivated'
         PROFILE_NAME_CHANGED = 'PROFILE_NAME_CHANGED', 'Profile name changed'
         # metadata never holds a password, hash or token.
         PASSWORD_CHANGED = 'PASSWORD_CHANGED', 'Password changed'
@@ -128,6 +132,8 @@ class AuditEvent(AppendOnlyModel):
         # A SUPER_ADMIN opening a conversation assigned to another admin.
         SUPPORT_CONVERSATION_VIEWED = 'SUPPORT_CONVERSATION_VIEWED', 'Support conversation viewed'
         SUPPORT_ATTACHMENT_VIEWED = 'SUPPORT_ATTACHMENT_VIEWED', 'Support attachment viewed'
+        # An OPEN conversation moved off a deactivated admin by the normal routing rule.
+        SUPPORT_CONVERSATION_REASSIGNED = 'SUPPORT_CONVERSATION_REASSIGNED', 'Support conversation reassigned'
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,

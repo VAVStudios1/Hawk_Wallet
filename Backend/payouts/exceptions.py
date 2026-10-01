@@ -101,3 +101,8 @@ class PayoutAlreadyCancelled(PayoutError):
 class PayoutQrNotFound(PayoutError):
     code = 'payout_qr_not_found'
     default_message = 'The payout QR image is not available.'
+
+
+class InvalidPayoutQuery(PayoutError):
+    code = 'invalid_query'
+    default_message = 'The payout list query is invalid.'

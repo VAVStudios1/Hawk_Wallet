@@ -12,15 +12,6 @@ import com.example.hawk_wallet.ui.model.OrderStatus
 import com.example.hawk_wallet.ui.model.PayInStatus
 import com.example.hawk_wallet.ui.model.PayoutStatus
 
-/** Admin Orders: every member's orders, as the backend lists them. */
-data class AdminOrdersUiState(
-    val orders: List<AdminOrderUiModel> = emptyList(),
-    val isLoading: Boolean = false,
-    val error: String? = null,
-    /** Set once the list has been requested at least once. */
-    val loaded: Boolean = false
-)
-
 /** The pay-in review dialog currently open on Admin Order Details. */
 enum class PayInReviewDialog { CONFIRM, REJECT }
 

@@ -7,6 +7,7 @@ from core.permissions import IsActiveAdmin, IsVerifiedMember
 from core.utils import error_response, success_response
 from orders.exceptions import (
     AdminOrderReadPermissionDenied,
+    InvalidAdminOrderQuery,
     ClaimConflict,
     ClaimError,
     ClaimPermissionDenied,
@@ -28,6 +29,7 @@ from orders.exceptions import (
     OrderReadPermissionDenied,
     PayoutMethodUnavailable,
 )
+from orders.models import Order
 from orders.serializers import (
     AdminOfferSerializer,
     AdminOrderDetailSerializer,
@@ -159,6 +161,7 @@ class MemberOrderDetailView(MemberOrderReadAPIView):
 ADMIN_READ_ERROR_STATUS = {
     AdminOrderReadPermissionDenied: status.HTTP_403_FORBIDDEN,
     OrderNotFound: status.HTTP_404_NOT_FOUND,
+    InvalidAdminOrderQuery: status.HTTP_400_BAD_REQUEST,
 }
 
 
@@ -171,12 +174,30 @@ class AdminOrderReadAPIView(ServiceAPIView):
 
 
 class AdminOrdersView(AdminOrderReadAPIView):
-    @extend_schema(responses={200: AdminOrderSerializer(many=True)})
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('status', str, enum=list(Order.Status.values), description='Only this status.'),
+            OpenApiParameter('awaiting_action', str, enum=['true', 'false'],
+                             description='true: only orders an admin has a pending step on.'),
+            OpenApiParameter('search', str, description='Reference or member name; digits also match mobile.'),
+            OpenApiParameter('page', int, description='1-based page number.'),
+            OpenApiParameter('page_size', int, description='1-100; default 20.'),
+        ],
+        responses={200: AdminOrderSerializer(many=True)},
+    )
     def get(self, request):
-        orders = list_admin_orders(admin=request.user)
+        params = request.query_params
+        orders, meta = list_admin_orders(
+            admin=request.user,
+            status=params.get('status'),
+            awaiting_action=params.get('awaiting_action'),
+            search=params.get('search'),
+            page=params.get('page'),
+            page_size=params.get('page_size'),
+        )
         return success_response(
             'Orders.',
-            data={'orders': AdminOrderSerializer(orders, many=True).data},
+            data={'orders': AdminOrderSerializer(orders, many=True).data, **meta},
         )
 
 

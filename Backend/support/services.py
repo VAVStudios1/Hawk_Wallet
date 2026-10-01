@@ -319,6 +319,16 @@ def list_admin_conversations(*, admin, status=None, page=None, page_size=None):
     return _paginate(queryset, page, page_size)
 
 
+def count_open_admin_conversations(*, admin):
+    """
+    The number of OPEN conversations the admin can see, under the same
+    visibility as list_admin_conversations: ADMIN their assigned ones,
+    SUPER_ADMIN all. Read-only.
+    """
+    _require_admin(admin)
+    return _visible_conversations(admin).filter(status=Conversation.Status.OPEN).count()
+
+
 def get_admin_conversation(*, admin, conversation_id, ip_address=None):
     """
     One visible conversation. A SUPER_ADMIN opening a conversation assigned
@@ -592,4 +602,57 @@ def _open_attachment(message):
         raise AttachmentNotFound()
     return AttachmentFile(
         file=file, content_type=message.attachment_content_type, name=message.attachment_name
+    )
+
+
+# --- reassignment -------------------------------------------------------------
+
+def reassign_open_conversations(*, from_admin, actor, ip_address=None):
+    """
+    Move every OPEN conversation assigned to `from_admin` - an admin who has
+    just been deactivated - to another active ADMIN, using the normal routing
+    rule (_least_loaded_admin, re-evaluated for each conversation so the load
+    stays balanced). SUPER_ADMINs are never in that pool. CLOSED conversations
+    are left as they are.
+
+    If no eligible ADMIN exists, the remaining conversations stay assigned to
+    `from_admin`: nothing is lost, and they show as stranded
+    (count_stranded_open_conversations) until an admin is available.
+
+    Call inside the deactivating transaction, after `from_admin` is saved
+    inactive. This is the only place an assignment changes; it bypasses the
+    model's immutable assigned_admin on purpose, under a row lock, and
+    records one SUPPORT_CONVERSATION_REASSIGNED event per conversation.
+    Returns (reassigned, stranded).
+    """
+    if from_admin.is_active:
+        raise ValueError('Only a deactivated admin\'s conversations are reassigned.')
+    conversations = list(
+        Conversation.objects.select_for_update()
+        .filter(assigned_admin=from_admin, status=Conversation.Status.OPEN)
+        .order_by('created_at', 'id')
+    )
+    reassigned = 0
+    for conversation in conversations:
+        admin = _least_loaded_admin()
+        if admin is None:
+            break
+        Conversation.objects.filter(pk=conversation.pk).update(assigned_admin=admin)
+        _audit(
+            actor,
+            AuditEvent.Action.SUPPORT_CONVERSATION_REASSIGNED,
+            conversation,
+            ip_address,
+            from_admin_id=from_admin.pk,
+            to_admin_id=admin.pk,
+            reason='admin_deactivated',
+        )
+        reassigned += 1
+    return reassigned, len(conversations) - reassigned
+
+
+def stranded_open_conversations():
+    """OPEN conversations whose assigned admin can no longer answer (inactive or no longer ADMIN)."""
+    return Conversation.objects.filter(status=Conversation.Status.OPEN).exclude(
+        assigned_admin__is_active=True, assigned_admin__role=User.Role.ADMIN
     )

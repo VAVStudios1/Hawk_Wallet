@@ -3,6 +3,10 @@ package com.example.hawk_wallet.data.remote.api
 import com.example.hawk_wallet.data.remote.model.AdminOfferDto
 import com.example.hawk_wallet.data.remote.model.AdminOrderDto
 import com.example.hawk_wallet.data.remote.model.AdminOrderListData
+import com.example.hawk_wallet.data.remote.model.AdminPayInItemDto
+import com.example.hawk_wallet.data.remote.model.AdminPayInListData
+import com.example.hawk_wallet.data.remote.model.AdminPayoutItemDto
+import com.example.hawk_wallet.data.remote.model.AdminPayoutListData
 import com.example.hawk_wallet.data.remote.model.ApiResponse
 import com.example.hawk_wallet.data.remote.model.CancelPayoutRequest
 import com.example.hawk_wallet.data.remote.model.ConfirmPayInRequest
@@ -21,11 +25,46 @@ import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.Part
 import retrofit2.http.Path
+import retrofit2.http.Query
 
 /** Admin-only order views, offer creation, pay-in review and payouts; authenticated by the shared JWT interceptor. */
 interface AdminOrderApi {
+    /** One page; [status] is a backend Order.Status value, [search] is matched by the server. */
     @GET("api/admin/orders/")
-    suspend fun orders(): Response<ApiResponse<AdminOrderListData>>
+    suspend fun orders(
+        @Query("status") status: String? = null,
+        /** "true": only orders an admin has a pending step on (the backend defines which). */
+        @Query("awaiting_action") awaitingAction: String? = null,
+        @Query("search") search: String? = null,
+        @Query("page") page: Int? = null,
+        @Query("page_size") pageSize: Int? = null
+    ): Response<ApiResponse<AdminOrderListData>>
+
+    /** One page of pay-ins; [status] is a backend PayIn.Status value. Carries no BUY-method details. */
+    @GET("api/admin/pay-ins/")
+    suspend fun payIns(
+        @Query("status") status: String? = null,
+        @Query("search") search: String? = null,
+        @Query("page") page: Int? = null,
+        @Query("page_size") pageSize: Int? = null
+    ): Response<ApiResponse<AdminPayInListData>>
+
+    /** Reveals the member's BUY account, so the backend audits the call. */
+    @GET("api/admin/pay-ins/{id}/")
+    suspend fun payIn(@Path("id") payInId: Long): Response<ApiResponse<AdminPayInItemDto>>
+
+    /** One page of payouts; [status] is a backend Payout.Status value. Carries no UPI ID. */
+    @GET("api/admin/payouts/")
+    suspend fun payouts(
+        @Query("status") status: String? = null,
+        @Query("search") search: String? = null,
+        @Query("page") page: Int? = null,
+        @Query("page_size") pageSize: Int? = null
+    ): Response<ApiResponse<AdminPayoutListData>>
+
+    /** Reveals the member's UPI ID, so the backend audits the call. */
+    @GET("api/admin/payouts/{id}/")
+    suspend fun payout(@Path("id") payoutId: Long): Response<ApiResponse<AdminPayoutItemDto>>
 
     /** Reveals the member's UPI ID, so the backend audits every call. */
     @GET("api/admin/orders/{id}/")

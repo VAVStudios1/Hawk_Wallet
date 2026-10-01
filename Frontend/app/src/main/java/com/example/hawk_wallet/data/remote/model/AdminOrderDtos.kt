@@ -3,9 +3,13 @@ package com.example.hawk_wallet.data.remote.model
 // Every amount is the backend's decimal string, kept as-is: the server owns
 // income, payout target and the payout running totals.
 
-/** GET /api/admin/orders/ -> data. */
+/** GET /api/admin/orders/ -> data: one page, with the same meta as every admin list. */
 data class AdminOrderListData(
-    val orders: List<AdminOrderDto>
+    val orders: List<AdminOrderDto>,
+    val page: Int,
+    val page_size: Int,
+    val total: Int,
+    val has_next: Boolean
 )
 
 /**

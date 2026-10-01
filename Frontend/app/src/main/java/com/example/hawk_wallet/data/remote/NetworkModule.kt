@@ -1,7 +1,10 @@
 package com.example.hawk_wallet.data.remote
 
 import com.example.hawk_wallet.data.local.SessionManager
+import com.example.hawk_wallet.data.remote.api.AdminDashboardApi
+import com.example.hawk_wallet.data.remote.api.AdminManagementApi
 import com.example.hawk_wallet.data.remote.api.AdminOrderApi
+import com.example.hawk_wallet.data.remote.api.AdminUserApi
 import com.example.hawk_wallet.data.remote.api.AuthApi
 import com.example.hawk_wallet.data.remote.api.BuyMethodApi
 import com.example.hawk_wallet.data.remote.api.HomeApi
@@ -71,6 +74,15 @@ object NetworkModule {
 
     fun provideAdminOrderApi(sessionManager: SessionManager): AdminOrderApi =
         provideRetrofit(sessionManager).create(AdminOrderApi::class.java)
+
+    fun provideAdminDashboardApi(sessionManager: SessionManager): AdminDashboardApi =
+        provideRetrofit(sessionManager).create(AdminDashboardApi::class.java)
+
+    fun provideAdminUserApi(sessionManager: SessionManager): AdminUserApi =
+        provideRetrofit(sessionManager).create(AdminUserApi::class.java)
+
+    fun provideAdminManagementApi(sessionManager: SessionManager): AdminManagementApi =
+        provideRetrofit(sessionManager).create(AdminManagementApi::class.java)
 
     fun provideTeamApi(sessionManager: SessionManager): TeamApi =
         provideRetrofit(sessionManager).create(TeamApi::class.java)

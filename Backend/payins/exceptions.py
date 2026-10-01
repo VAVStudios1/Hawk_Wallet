@@ -94,3 +94,8 @@ class PayInAlreadyReviewed(PayInError):
 class InvalidRejectionReason(PayInError):
     code = 'invalid_rejection_reason'
     default_message = 'A rejection reason (1-500 characters) is required.'
+
+
+class InvalidPayInQuery(PayInError):
+    code = 'invalid_query'
+    default_message = 'The pay-in list query is invalid.'

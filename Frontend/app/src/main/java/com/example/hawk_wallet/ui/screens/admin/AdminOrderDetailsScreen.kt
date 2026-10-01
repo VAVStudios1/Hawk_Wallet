@@ -1,33 +1,23 @@
 package com.example.hawk_wallet.ui.screens.admin
 
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -42,10 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.hawk_wallet.ui.components.AuthErrorBanner
@@ -69,18 +56,22 @@ import com.example.hawk_wallet.ui.screens.orders.OrderCard
 import com.example.hawk_wallet.ui.screens.orders.PayoutDestination
 import com.example.hawk_wallet.ui.screens.orders.PrimaryActionButton
 import com.example.hawk_wallet.ui.screens.orders.ScreenHorizontalPadding
+import com.example.hawk_wallet.ui.theme.HawkAmberDark
 import com.example.hawk_wallet.ui.theme.HawkCoral
 import com.example.hawk_wallet.ui.theme.HawkEmerald
+import com.example.hawk_wallet.ui.theme.HawkIndigo
 import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
 
 /**
- * One order for an admin: amounts, member, the BUY side (pay-in) with its
- * review, and the SELL side (payout method and payouts) with payout actions.
+ * One order for an admin, in sections: status, customer, financial summary,
+ * pay-in (BUY side) with its review, payout (SELL side) with payout actions,
+ * and a timeline. Every amount and timestamp is the backend's.
  */
 @Composable
 fun AdminOrderDetailsScreen(
     viewModel: AdminOrderDetailsViewModel,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onOpenUser: (userId: Long) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
@@ -112,7 +103,8 @@ fun AdminOrderDetailsScreen(
             onCancel = viewModel::cancelPayout
         ),
         onBackClick = onBackClick,
-        onRefresh = viewModel::refresh
+        onRefresh = viewModel::refresh,
+        onOpenUser = onOpenUser
     )
 }
 
@@ -149,7 +141,8 @@ private fun AdminOrderDetailsContent(
     actions: PayInReviewActions,
     onBackClick: () -> Unit,
     onRefresh: () -> Unit,
-    payoutActions: PayoutActions = PayoutActions()
+    payoutActions: PayoutActions = PayoutActions(),
+    onOpenUser: (Long) -> Unit = {}
 ) {
     val order = uiState.order
     val snackbarHostState = remember { SnackbarHostState() }
@@ -159,24 +152,22 @@ private fun AdminOrderDetailsContent(
             actions.onMessageShown()
         }
     }
-    when (uiState.reviewDialog) {
-        PayInReviewDialog.CONFIRM -> ConfirmPayInDialog(uiState, actions)
-        PayInReviewDialog.REJECT -> RejectPayInDialog(uiState, actions)
-        null -> Unit
-    }
-    when (val dialog = uiState.payoutDialog) {
-        PayoutDialog.Create -> CreatePayoutDialog(uiState, payoutActions)
-        is PayoutDialog.MarkPaid -> uiState.payout(dialog.payoutId)?.let { MarkPayoutPaidDialog(it, uiState, payoutActions) }
-        is PayoutDialog.Cancel -> uiState.payout(dialog.payoutId)?.let { CancelPayoutDialog(it, uiState, payoutActions) }
-        is PayoutDialog.Qr -> PayoutQrDialog(uiState, payoutActions)
-        null -> Unit
-    }
+    OrderDialogs(uiState, actions, payoutActions)
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = { HawkBackTopBar(title = order?.reference ?: "Order Details", onBackClick = onBackClick) },
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = { if (uiState.canReview) ReviewBar(actions) }
+        bottomBar = {
+            if (uiState.canReview) {
+                AdminActionBar(
+                    secondaryLabel = "Reject",
+                    onSecondary = actions.onOpenReject,
+                    primaryLabel = "Confirm",
+                    onPrimary = actions.onOpenConfirm
+                )
+            }
+        }
     ) { innerPadding ->
         val modifier = Modifier.padding(innerPadding)
         when {
@@ -202,33 +193,17 @@ private fun AdminOrderDetailsContent(
                     uiState.error?.let {
                         AuthErrorBanner(message = it, modifier = Modifier.padding(bottom = 12.dp))
                     }
-                    OrderSummary(order)
+                    OrderStatusSection(order)
                     Spacer(modifier = Modifier.height(12.dp))
-                    OrderCard(tag = "AMOUNTS") {
-                        AmountRow(label = "Order amount", amount = order.orderAmount)
-                        AmountRow(label = "Income (${DisplayFormat.percent(order.incomeRate)})", amount = order.incomeAmount)
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.outline,
-                            modifier = Modifier.padding(vertical = 6.dp)
-                        )
-                        AmountRow(label = "Payout target", amount = order.payoutTarget, emphasized = true)
-                    }
+                    CustomerSection(order, onOpenUser = { onOpenUser(order.memberId) })
                     Spacer(modifier = Modifier.height(12.dp))
-                    order.payInUpiId?.let {
-                        PayInReceivingAccountCard(upiId = it)
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
-                    PayInCard(order.latestPayIn)
-                    order.payoutMethod?.let {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        PayoutMethodCard(method = it, label = order.payoutMethodLabel)
-                    }
+                    FinancialSummarySection(order)
                     Spacer(modifier = Modifier.height(12.dp))
-                    PayoutSettlementCard(
-                        order = order,
-                        canCreatePayout = uiState.canCreatePayout,
-                        actions = payoutActions
-                    )
+                    PayInSection(order.latestPayIn, receivingUpiId = order.payInUpiId)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    PayoutSection(order = order, canCreatePayout = uiState.canCreatePayout, actions = payoutActions)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    TimelineSection(order)
                     Spacer(modifier = Modifier.height(24.dp))
                 }
             }
@@ -237,8 +212,81 @@ private fun AdminOrderDetailsContent(
 }
 
 @Composable
-private fun OrderSummary(order: AdminOrderUiModel) {
-    OrderCard(tag = "ORDER") {
+private fun OrderDialogs(uiState: AdminOrderDetailsUiState, actions: PayInReviewActions, payoutActions: PayoutActions) {
+    val payIn = uiState.order?.latestPayIn
+    when (uiState.reviewDialog) {
+        PayInReviewDialog.CONFIRM -> if (payIn != null) {
+            ConfirmPayInDialog(
+                amount = payIn.amount,
+                utr = payIn.utr,
+                isSubmitting = uiState.isReviewing,
+                error = uiState.reviewError,
+                onConfirm = actions.onConfirm,
+                onDismiss = actions.onDismiss
+            )
+        }
+        PayInReviewDialog.REJECT -> RejectPayInDialog(
+            reason = uiState.rejectionReason,
+            reasonError = uiState.rejectionReasonError,
+            isSubmitting = uiState.isReviewing,
+            error = uiState.reviewError,
+            onReasonChange = actions.onReasonChange,
+            onReject = actions.onReject,
+            onDismiss = actions.onDismiss
+        )
+        null -> Unit
+    }
+    when (val dialog = uiState.payoutDialog) {
+        PayoutDialog.Create -> CreatePayoutDialog(
+            amount = uiState.payoutAmount,
+            amountError = uiState.payoutAmountError,
+            remainingToCommit = uiState.order?.remainingToCommit,
+            isSubmitting = uiState.isPayoutSubmitting,
+            error = uiState.payoutError,
+            onAmountChange = payoutActions.onAmountChange,
+            onCreate = payoutActions.onCreate,
+            onDismiss = payoutActions.onDismiss
+        )
+        is PayoutDialog.MarkPaid -> uiState.payout(dialog.payoutId)?.let { payout ->
+            MarkPayoutPaidDialog(
+                amount = payout.amount,
+                upiId = payout.destination.upiId,
+                utr = uiState.payoutUtr,
+                utrError = uiState.payoutUtrError,
+                isSubmitting = uiState.isPayoutSubmitting,
+                error = uiState.payoutError,
+                onUtrChange = payoutActions.onUtrChange,
+                onMarkPaid = payoutActions.onMarkPaid,
+                onDismiss = payoutActions.onDismiss
+            )
+        }
+        is PayoutDialog.Cancel -> uiState.payout(dialog.payoutId)?.let { payout ->
+            CancelPayoutDialog(
+                amount = payout.amount,
+                reason = uiState.cancellationReason,
+                reasonError = uiState.cancellationReasonError,
+                isSubmitting = uiState.isPayoutSubmitting,
+                error = uiState.payoutError,
+                onReasonChange = payoutActions.onReasonChange,
+                onCancel = payoutActions.onCancel,
+                onDismiss = payoutActions.onDismiss
+            )
+        }
+        is PayoutDialog.Qr -> PayoutQrDialog(
+            isLoading = uiState.isQrLoading,
+            error = uiState.qrError,
+            image = uiState.qrImage,
+            onDismiss = payoutActions.onDismiss
+        )
+        null -> Unit
+    }
+}
+
+// --- 1. Order status ---------------------------------------------------------
+
+@Composable
+private fun OrderStatusSection(order: AdminOrderUiModel) {
+    OrderCard(tag = "ORDER STATUS") {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = order.reference,
@@ -250,17 +298,42 @@ private fun OrderSummary(order: AdminOrderUiModel) {
             OrderStatusChip(status = order.status)
         }
         Spacer(modifier = Modifier.height(8.dp))
-        DetailRow(label = "Member", value = order.memberName)
-        DetailRow(label = "Member ID", value = order.memberId.toString())
         DetailRow(label = "Claimed", value = DisplayFormat.dateTime(order.claimedAt))
-        order.activatedAt?.let { DetailRow(label = "Payment confirmed", value = DisplayFormat.dateTime(it)) }
-        order.completedAt?.let { DetailRow(label = "Completed", value = DisplayFormat.dateTime(it)) }
-        order.expiresAt?.let { DetailRow(label = "Expires", value = DisplayFormat.dateTime(it)) }
+        order.expiresAt?.let { DetailRow(label = "Payment due by", value = DisplayFormat.dateTime(it)) }
     }
 }
 
+// --- 2. Customer -------------------------------------------------------------
+
 @Composable
-private fun PayInCard(payIn: AdminPayInUiModel?) {
+private fun CustomerSection(order: AdminOrderUiModel, onOpenUser: () -> Unit) {
+    OrderCard(tag = "CUSTOMER") {
+        DetailRow(label = "Name", value = order.memberName)
+        DetailRow(label = "Member ID", value = order.memberId.toString())
+        CardLinkRow(text = "View user", onClick = onOpenUser)
+    }
+}
+
+// --- 3. Offer / financial summary --------------------------------------------
+
+/** The order's stored amounts and the server's payout totals; nothing is computed here. */
+@Composable
+private fun FinancialSummarySection(order: AdminOrderUiModel) {
+    OrderCard(tag = "FINANCIAL SUMMARY") {
+        AmountRow(label = "You Pay", amount = order.orderAmount)
+        AmountRow(label = "Income (${DisplayFormat.percent(order.incomeRate)})", amount = order.incomeAmount)
+        AmountRow(label = "Payout Target", amount = order.payoutTarget, emphasized = true)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 6.dp))
+        AmountRow(label = "Paid", amount = order.payoutPaidTotal)
+        AmountRow(label = "Committed (pending + paid)", amount = order.payoutCommittedTotal)
+        order.remainingToCommit?.let { AmountRow(label = "Remaining to commit", amount = it, emphasized = true) }
+    }
+}
+
+// --- 4. Pay-in ----------------------------------------------------------------
+
+@Composable
+private fun PayInSection(payIn: AdminPayInUiModel?, receivingUpiId: String?) {
     OrderCard(tag = "PAY-IN") {
         if (payIn == null) {
             Text(
@@ -268,6 +341,7 @@ private fun PayInCard(payIn: AdminPayInUiModel?) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            receivingUpiId?.let { DetailRow(label = "Receiving account", value = it) }
             return@OrderCard
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -284,9 +358,10 @@ private fun PayInCard(payIn: AdminPayInUiModel?) {
         DetailRow(label = "UTR", value = payIn.utr)
         // BUY side: the member's own account the money came from (not the SELL payout method).
         DetailRow(
-            label = "Paid from (BUY)",
+            label = "Paid from",
             value = payIn.paidFrom?.let { "${it.providerName} · ${it.upiId}" } ?: "Not recorded"
         )
+        receivingUpiId?.let { DetailRow(label = "Receiving account", value = it) }
         DetailRow(label = "Submitted", value = DisplayFormat.dateTime(payIn.submittedAt))
         payIn.reviewedAt?.let { DetailRow(label = "Reviewed", value = DisplayFormat.dateTime(it)) }
         if (payIn.status == PayInStatus.REJECTED) {
@@ -300,138 +375,22 @@ private fun PayInCard(payIn: AdminPayInUiModel?) {
     }
 }
 
-@Composable
-private fun ReviewBar(actions: PayInReviewActions) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = ScreenHorizontalPadding, vertical = 16.dp)
-    ) {
-        OutlinedButton(
-            onClick = actions.onOpenReject,
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = HawkCoral),
-            border = BorderStroke(1.dp, HawkCoral),
-            modifier = Modifier
-                .weight(1f)
-                .height(52.dp)
-        ) {
-            Text("Reject", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        PrimaryActionButton(
-            text = "Confirm",
-            onClick = actions.onOpenConfirm,
-            modifier = Modifier.weight(1f)
-        )
-    }
-}
+// --- 5. Payout ----------------------------------------------------------------
 
+/** SELL side: where the platform pays the member, the Create Payout action and the payout history. */
 @Composable
-private fun ConfirmPayInDialog(uiState: AdminOrderDetailsUiState, actions: PayInReviewActions) {
-    val payIn = uiState.order?.latestPayIn ?: return
-    AlertDialog(
-        onDismissRequest = actions.onDismiss,
-        title = { Text("Confirm pay-in?") },
-        text = {
-            Column {
-                Text(
-                    text = "Only confirm after checking that ${DisplayFormat.rupees(payIn.amount)} with UTR " +
-                        "${payIn.utr} has reached the platform account. This cannot be undone.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                uiState.reviewError?.let {
-                    Text(text = it, color = HawkCoral, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-                }
+private fun PayoutSection(order: AdminOrderUiModel, canCreatePayout: Boolean, actions: PayoutActions) {
+    OrderCard(tag = "PAYOUT", accent = HawkEmerald) {
+        order.payoutMethod?.let { method ->
+            PayoutDestination(method = method)
+            if (order.payoutMethodLabel.isNotBlank()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                DetailRow(label = "Label", value = order.payoutMethodLabel)
             }
-        },
-        confirmButton = {
-            TextButton(onClick = actions.onConfirm, enabled = !uiState.isReviewing) {
-                if (uiState.isReviewing) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                else Text("Confirm", fontWeight = FontWeight.SemiBold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = actions.onDismiss, enabled = !uiState.isReviewing) { Text("Cancel") }
         }
-    )
-}
-
-@Composable
-private fun RejectPayInDialog(uiState: AdminOrderDetailsUiState, actions: PayInReviewActions) {
-    AlertDialog(
-        onDismissRequest = actions.onDismiss,
-        title = { Text("Reject pay-in?") },
-        text = {
-            Column {
-                Text(
-                    text = "The member will see this reason and can submit a new UTR.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = uiState.rejectionReason,
-                    onValueChange = actions.onReasonChange,
-                    label = { Text("Reason") },
-                    isError = uiState.rejectionReasonError != null,
-                    supportingText = {
-                        Text(uiState.rejectionReasonError ?: "${uiState.rejectionReason.length}/$REJECTION_REASON_MAX_LENGTH")
-                    },
-                    enabled = !uiState.isReviewing,
-                    minLines = 2,
-                    maxLines = 4,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                uiState.reviewError?.let {
-                    Text(text = it, color = HawkCoral, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = actions.onReject,
-                enabled = !uiState.isReviewing,
-                colors = ButtonDefaults.textButtonColors(contentColor = HawkCoral)
-            ) {
-                if (uiState.isReviewing) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                else Text("Reject", fontWeight = FontWeight.SemiBold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = actions.onDismiss, enabled = !uiState.isReviewing) { Text("Cancel") }
-        }
-    )
-}
-
-/** Where the member pays the platform. Deliberately separate from [PayoutMethodCard]. */
-@Composable
-private fun PayInReceivingAccountCard(upiId: String) {
-    OrderCard(tag = "PAY-IN RECEIVING ACCOUNT") {
-        DetailRow(label = "UPI ID", value = upiId)
-    }
-}
-
-/** Where the platform pays the member (SELL). Never a pay-in account. */
-@Composable
-private fun PayoutMethodCard(method: OrderPayoutMethodUiModel, label: String) {
-    OrderCard(tag = "PAYOUT METHOD · SELL", accent = HawkEmerald) {
-        PayoutDestination(method = method)
-        if (label.isNotBlank()) {
-            Spacer(modifier = Modifier.height(4.dp))
-            DetailRow(label = "Label", value = label)
-        }
-    }
-}
-
-/** SELL settlement: the server's payout totals, the Create Payout action and payout history. */
-@Composable
-private fun PayoutSettlementCard(order: AdminOrderUiModel, canCreatePayout: Boolean, actions: PayoutActions) {
-    OrderCard(tag = "PAYOUT / SELL", accent = HawkEmerald) {
-        AmountRow(label = "Payout target", amount = order.payoutTarget, emphasized = true)
-        AmountRow(label = "Committed", amount = order.payoutCommittedTotal)
-        AmountRow(label = "Paid", amount = order.payoutPaidTotal)
-        order.remainingToCommit?.let { AmountRow(label = "Remaining to commit", amount = it) }
+        AmountRow(label = "Payout Target", amount = order.payoutTarget)
+        AmountRow(label = "Total paid", amount = order.payoutPaidTotal)
+        order.remainingToCommit?.let { AmountRow(label = "Remaining to commit", amount = it, emphasized = true) }
         if (canCreatePayout) {
             Spacer(modifier = Modifier.height(12.dp))
             PrimaryActionButton(text = "Create Payout", onClick = actions.onOpenCreate, modifier = Modifier.fillMaxWidth())
@@ -439,7 +398,7 @@ private fun PayoutSettlementCard(order: AdminOrderUiModel, canCreatePayout: Bool
         HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 12.dp))
         Text(
             text = "Payout history",
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface
         )
@@ -507,169 +466,62 @@ private fun PayoutRow(payout: AdminPayoutUiModel, actions: PayoutActions) {
     }
 }
 
-@Composable
-private fun PayoutDialogError(uiState: AdminOrderDetailsUiState) {
-    uiState.payoutError?.let {
-        Text(text = it, color = HawkCoral, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+// --- 6. Timeline --------------------------------------------------------------
+
+private data class TimelineEvent(val title: String, val timestamp: String, val color: Color)
+
+/**
+ * The order's lifecycle in the order it happens, from the timestamps the
+ * backend returned. Only the latest pay-in is part of the order detail, so
+ * earlier rejected attempts are not listed.
+ */
+private fun timelineOf(order: AdminOrderUiModel): List<TimelineEvent> = buildList {
+    add(TimelineEvent("Order claimed", order.claimedAt, HawkIndigo))
+    order.latestPayIn?.let { payIn ->
+        add(TimelineEvent("Pay-in submitted · UTR ${payIn.utr}", payIn.submittedAt, HawkAmberDark))
+        payIn.reviewedAt?.let {
+            val rejected = payIn.status == PayInStatus.REJECTED
+            add(TimelineEvent(if (rejected) "Pay-in rejected" else "Pay-in confirmed", it, if (rejected) HawkCoral else HawkEmerald))
+        }
     }
-}
-
-@Composable
-private fun PayoutSubmitButton(label: String, uiState: AdminOrderDetailsUiState, onClick: () -> Unit, color: Color? = null) {
-    TextButton(
-        onClick = onClick,
-        enabled = !uiState.isPayoutSubmitting,
-        colors = if (color != null) ButtonDefaults.textButtonColors(contentColor = color) else ButtonDefaults.textButtonColors()
-    ) {
-        if (uiState.isPayoutSubmitting) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-        else Text(label, fontWeight = FontWeight.SemiBold)
+    order.payouts.forEach { payout ->
+        add(TimelineEvent("Payout #${payout.id} created · ${DisplayFormat.rupees(payout.amount)}", payout.createdAt, HawkAmberDark))
+        payout.paidAt?.let { add(TimelineEvent("Payout #${payout.id} paid", it, HawkEmerald)) }
     }
+    order.completedAt?.let { add(TimelineEvent("Order completed", it, HawkEmerald)) }
 }
 
 @Composable
-private fun CreatePayoutDialog(uiState: AdminOrderDetailsUiState, actions: PayoutActions) {
-    AlertDialog(
-        onDismissRequest = actions.onDismiss,
-        title = { Text("Create payout") },
-        text = {
-            Column {
-                Text(
-                    text = "A pending payout to the member's SELL payout method. The server checks the amount " +
-                        "against what is left to commit" +
-                        (uiState.order?.remainingToCommit?.let { " (${DisplayFormat.rupees(it)})" } ?: "") + ".",
-                    style = MaterialTheme.typography.bodyMedium
+private fun TimelineSection(order: AdminOrderUiModel) {
+    OrderCard(tag = "TIMELINE") {
+        timelineOf(order).forEach { event ->
+            Row(modifier = Modifier.padding(vertical = 5.dp), verticalAlignment = Alignment.Top) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .size(8.dp)
+                        .background(event.color, CircleShape)
                 )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = uiState.payoutAmount,
-                    onValueChange = actions.onAmountChange,
-                    label = { Text("Amount (₹)") },
-                    isError = uiState.payoutAmountError != null,
-                    supportingText = { uiState.payoutAmountError?.let { Text(it) } },
-                    enabled = !uiState.isPayoutSubmitting,
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                PayoutDialogError(uiState)
-            }
-        },
-        confirmButton = { PayoutSubmitButton("Create", uiState, actions.onCreate) },
-        dismissButton = {
-            TextButton(onClick = actions.onDismiss, enabled = !uiState.isPayoutSubmitting) { Text("Close") }
-        }
-    )
-}
-
-@Composable
-private fun MarkPayoutPaidDialog(payout: AdminPayoutUiModel, uiState: AdminOrderDetailsUiState, actions: PayoutActions) {
-    AlertDialog(
-        onDismissRequest = actions.onDismiss,
-        title = { Text("Mark payout paid?") },
-        text = {
-            Column {
-                Text(
-                    text = "Only mark paid after ${DisplayFormat.rupees(payout.amount)} has been sent to " +
-                        "${payout.destination.upiId}. Enter the bank UTR of that transfer. This cannot be undone.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = uiState.payoutUtr,
-                    onValueChange = actions.onUtrChange,
-                    label = { Text("UTR") },
-                    isError = uiState.payoutUtrError != null,
-                    supportingText = { Text(uiState.payoutUtrError ?: "${uiState.payoutUtr.length}/$UTR_LENGTH digits") },
-                    enabled = !uiState.isPayoutSubmitting,
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                PayoutDialogError(uiState)
-            }
-        },
-        confirmButton = { PayoutSubmitButton("Mark Paid", uiState, actions.onMarkPaid) },
-        dismissButton = {
-            TextButton(onClick = actions.onDismiss, enabled = !uiState.isPayoutSubmitting) { Text("Close") }
-        }
-    )
-}
-
-@Composable
-private fun CancelPayoutDialog(payout: AdminPayoutUiModel, uiState: AdminOrderDetailsUiState, actions: PayoutActions) {
-    AlertDialog(
-        onDismissRequest = actions.onDismiss,
-        title = { Text("Cancel payout?") },
-        text = {
-            Column {
-                Text(
-                    text = "Cancel the pending ${DisplayFormat.rupees(payout.amount)} payout if it was created by " +
-                        "mistake. Its amount becomes available to commit again. This cannot be undone.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = uiState.cancellationReason,
-                    onValueChange = actions.onReasonChange,
-                    label = { Text("Reason") },
-                    isError = uiState.cancellationReasonError != null,
-                    supportingText = {
-                        Text(uiState.cancellationReasonError ?: "${uiState.cancellationReason.length}/$CANCELLATION_REASON_MAX_LENGTH")
-                    },
-                    enabled = !uiState.isPayoutSubmitting,
-                    minLines = 2,
-                    maxLines = 4,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                PayoutDialogError(uiState)
-            }
-        },
-        confirmButton = { PayoutSubmitButton("Cancel Payout", uiState, actions.onCancel, color = HawkCoral) },
-        dismissButton = {
-            TextButton(onClick = actions.onDismiss, enabled = !uiState.isPayoutSubmitting) { Text("Keep") }
-        }
-    )
-}
-
-/** The SELL destination's QR, as bytes from the authorized endpoint - never a URL or storage path. */
-@Composable
-private fun PayoutQrDialog(uiState: AdminOrderDetailsUiState, actions: PayoutActions) {
-    val bytes = uiState.qrImage
-    val bitmap = remember(bytes) { bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
-    AlertDialog(
-        onDismissRequest = actions.onDismiss,
-        title = { Text("Payout QR") },
-        text = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 160.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                when {
-                    uiState.isQrLoading -> CircularProgressIndicator()
-                    uiState.qrError != null -> Text(uiState.qrError, color = HawkCoral, style = MaterialTheme.typography.bodyMedium)
-                    bitmap != null -> Image(
-                        bitmap = bitmap,
-                        contentDescription = "Member's payout QR code",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = event.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
-                    bytes != null -> Text(
-                        "This QR image couldn't be displayed.",
-                        color = HawkCoral,
-                        style = MaterialTheme.typography.bodyMedium
+                    Text(
+                        text = DisplayFormat.dateTime(event.timestamp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = actions.onDismiss) { Text("Close") } }
-    )
+        }
+    }
 }
 
-@Preview(showBackground = true, heightDp = 1100)
+@Preview(showBackground = true, heightDp = 1600)
 @Composable
 private fun AdminOrderDetailsPreview() {
     Hawk_WalletTheme {

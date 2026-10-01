@@ -34,8 +34,9 @@ from django.core import signing
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from audit.models import LedgerEntry
-from audit.services import record_ledger_entry
+from audit.models import AuditEvent, LedgerEntry
+from audit.services import record_audit_event, record_ledger_entry
+from core import listing
 from core.permissions import is_active_admin, is_verified_member
 from orders.models import Order
 from paymethods.models import PaymentProvider, PlatformReceivingAccount, Rail
@@ -47,16 +48,17 @@ from payins.exceptions import (
     IdempotencyKeyConflict,
     InvalidIdempotencyKey,
     InvalidPayInIntent,
+    InvalidPayInQuery,
     InvalidRejectionReason,
     InvalidUtr,
     NoReceivingAccount,
     OrderNotPayable,
-    PayerAppUnavailable,
     PayInAlreadyReviewed,
     PayInConflict,
     PayInNotFound,
     PayInOrderNotFound,
     PayInPermissionDenied,
+    PayerAppUnavailable,
     ReviewPermissionDenied,
     UtrAlreadySubmitted,
 )
@@ -659,3 +661,71 @@ def _lock_payin_and_order(payin_id):
     order = Order.objects.select_for_update().get(pk=order_id)
     payin = PayIn.objects.select_for_update().get(pk=pk)
     return payin, order
+
+
+# --- admin reads ---------------------------------------------------------------
+
+ADMIN_PAY_IN_ORDERINGS = {
+    '-submitted_at': ('-submitted_at', '-id'),
+    'submitted_at': ('submitted_at', 'id'),
+}
+
+
+def list_admin_pay_ins(*, admin, status=None, search=None, ordering=None, page=None, page_size=None):
+    """
+    Return (pay_ins, meta): one page of every pay-in for an active admin.
+    Read-only, and platform-wide - any active admin may review any pay-in.
+    The list carries no BUY-method details (those are detail-only, audited).
+
+    status: one PayIn.Status value. search: order reference or member name
+    (substring), or - digits only - part of the member's mobile number or
+    the UTR. ordering: -submitted_at (default, newest first) or submitted_at.
+    """
+    if not is_active_admin(admin):
+        raise ReviewPermissionDenied()
+    queryset = PayIn.objects.select_related('order', 'user')
+    status = listing.choice(status, PayIn.Status.values, 'status', error=InvalidPayInQuery)
+    if status is not None:
+        queryset = queryset.filter(status=status)
+    query = listing.search_q(
+        search,
+        text_fields=('order__reference', 'user__name'),
+        digit_fields=('user__mobile_number', 'utr'),
+        error=InvalidPayInQuery,
+    )
+    if query is not None:
+        queryset = queryset.filter(query)
+    ordering = listing.choice(ordering, tuple(ADMIN_PAY_IN_ORDERINGS), 'ordering', error=InvalidPayInQuery)
+    queryset = queryset.order_by(*ADMIN_PAY_IN_ORDERINGS[ordering or '-submitted_at'])
+    return listing.paginate(queryset, page, page_size, error=InvalidPayInQuery)
+
+
+def get_admin_pay_in(*, admin, payin_id, ip_address=None):
+    """
+    Return pay-in `payin_id` for an active admin; unknown ids raise
+    PayInNotFound. Read-only for financial state. Because the detail reveals
+    the member's BUY (paid-from) account, a pay-in that names one records one
+    BUY_METHOD_VIEWED AuditEvent per call - the same rule as the admin order
+    detail.
+    """
+    if not is_active_admin(admin):
+        raise ReviewPermissionDenied()
+    pk = _as_pk(payin_id)
+    payin = (
+        PayIn.objects.select_related('order', 'user', 'buy_method__provider', 'reviewed_by')
+        .filter(pk=pk)
+        .first()
+        if pk
+        else None
+    )
+    if payin is None:
+        raise PayInNotFound()
+    if payin.buy_method is not None:
+        record_audit_event(
+            actor=admin,
+            action=AuditEvent.Action.BUY_METHOD_VIEWED,
+            target=payin.buy_method,
+            ip_address=ip_address,
+            metadata={'order_id': payin.order_id, 'payin_id': payin.pk},
+        )
+    return payin

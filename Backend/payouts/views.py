@@ -1,6 +1,6 @@
 from django.http import FileResponse
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiResponse, extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
 
 from core.api import ServiceAPIView, client_ip
@@ -11,6 +11,7 @@ from payouts.exceptions import (
     InvalidCancellationReason,
     InvalidIdempotencyKey,
     InvalidPayoutAmount,
+    InvalidPayoutQuery,
     InvalidPayoutUtr,
     OrderNotInPayout,
     OrderNotPayable,
@@ -28,7 +29,10 @@ from payouts.exceptions import (
     PayoutTotalConflict,
     PayoutUtrAlreadyUsed,
 )
+from payouts.models import Payout
 from payouts.serializers import (
+    AdminPayoutDetailSerializer,
+    AdminPayoutListSerializer,
     AdminPayoutMethodSerializer,
     CancelPayoutSerializer,
     CreatePayoutSerializer,
@@ -36,6 +40,8 @@ from payouts.serializers import (
     PayoutSerializer,
 )
 from payouts.services import (
+    get_admin_payout,
+    list_admin_payouts,
     cancel_payout,
     create_payout,
     get_payout_method_for_admin,
@@ -63,6 +69,7 @@ ERROR_STATUS = {
     PayoutNotCancellable: status.HTTP_409_CONFLICT,
     PayoutAlreadyCancelled: status.HTTP_409_CONFLICT,
     PayoutQrNotFound: status.HTTP_404_NOT_FOUND,
+    InvalidPayoutQuery: status.HTTP_400_BAD_REQUEST,
 }
 
 
@@ -150,3 +157,38 @@ class PayoutQrForAdminView(AdminPayoutAPIView):
         # A member's QR must never sit in a shared or browser cache.
         response['Cache-Control'] = 'no-store'
         return response
+
+
+class AdminPayoutsView(AdminPayoutAPIView):
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('status', str, enum=list(Payout.Status.values), description='Only this status.'),
+            OpenApiParameter('search', str, description='Order reference or member name; digits also match mobile / UTR.'),
+            OpenApiParameter('ordering', str, enum=['-created_at', 'created_at']),
+            OpenApiParameter('page', int, description='1-based page number.'),
+            OpenApiParameter('page_size', int, description='1-100; default 20.'),
+        ],
+        responses={200: AdminPayoutListSerializer(many=True)},
+    )
+    def get(self, request):
+        params = request.query_params
+        payouts, meta = list_admin_payouts(
+            admin=request.user,
+            status=params.get('status'),
+            search=params.get('search'),
+            ordering=params.get('ordering'),
+            page=params.get('page'),
+            page_size=params.get('page_size'),
+        )
+        return success_response(
+            'Payouts.',
+            data={'payouts': AdminPayoutListSerializer(payouts, many=True).data, **meta},
+        )
+
+
+class AdminPayoutDetailView(AdminPayoutAPIView):
+    @extend_schema(responses={200: AdminPayoutDetailSerializer})
+    def get(self, request, payout_id):
+        # Audited (PAYOUT_METHOD_VIEWED): the detail reveals the member's UPI ID.
+        payout = get_admin_payout(admin=request.user, payout_id=payout_id, ip_address=client_ip(request))
+        return success_response('Payout.', data=AdminPayoutDetailSerializer(payout).data)
