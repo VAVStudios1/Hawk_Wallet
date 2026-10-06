@@ -11,3 +11,8 @@ class HomeError(Exception):
 class HomePermissionDenied(HomeError):
     code = 'permission_denied'
     default_message = 'Only verified members have a home screen.'
+
+
+class InvalidTransactionQuery(HomeError):
+    code = 'invalid_query'
+    default_message = 'The transaction history query is invalid.'

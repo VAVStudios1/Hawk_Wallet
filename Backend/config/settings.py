@@ -71,6 +71,7 @@ INSTALLED_APPS = [
     'team',
     'accounts',
     'support',
+    'appupdates',
 ]
 
 MIDDLEWARE = [
@@ -82,6 +83,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Rejects outdated app versions on non-exempt API paths (see below).
+    'appupdates.middleware.AppVersionMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -167,6 +170,25 @@ STATIC_URL = 'static/'
 # are served only through authorized views. Keep outside any public root.
 
 PRIVATE_MEDIA_ROOT = Path(os.environ.get('PRIVATE_MEDIA_ROOT', BASE_DIR / 'private_media'))
+
+
+# Android app updates (appupdates). APKs are uploaded by a SUPER_ADMIN in
+# Django Admin into private storage and served by the API. Clients get
+# <APP_RELEASE_DOWNLOAD_BASE_URL>/api/app/releases/<version>/apk/; it must be
+# an https:// origin, otherwise no update is offered (or enforced).
+
+APP_RELEASE_DOWNLOAD_BASE_URL = os.environ.get('APP_RELEASE_DOWNLOAD_BASE_URL', '').strip()
+APP_RELEASE_MAX_APK_MB = int(os.environ.get('APP_RELEASE_MAX_APK_MB', '150'))
+
+# Requests to enforced API paths from an app below the published release's
+# minimum supported version (X-App-Version header) get 426
+# app_update_required. Exempt paths stay usable so an outdated app can sign
+# in, recover its password and fetch the update.
+APP_VERSION_ENFORCED_PREFIXES = ('/api/',)
+APP_VERSION_EXEMPT_PREFIXES = ('/api/auth/', '/api/app/')
+# False until every shipped app sends X-App-Version: requests without the
+# header are let through. Set True to also reject them.
+APP_VERSION_HEADER_REQUIRED = _env_bool('APP_VERSION_HEADER_REQUIRED', False)
 
 
 # Team / referral invite links: <REFERRAL_LINK_BASE_URL>?ref=<code>, e.g.

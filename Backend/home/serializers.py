@@ -39,3 +39,9 @@ class MemberHomeSerializer(serializers.Serializer):
 
     def get_deposit_withdrawal(self, home):
         return {'deposit': self._money(home.deposit), 'withdrawal': self._money(home.withdrawal)}
+
+
+class TransactionHistoryItemSerializer(HomeTransactionSerializer):
+    """A Home transaction plus its stable id, for paged lists."""
+
+    id = serializers.CharField()

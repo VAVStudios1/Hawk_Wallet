@@ -134,6 +134,11 @@ class AuditEvent(AppendOnlyModel):
         SUPPORT_ATTACHMENT_VIEWED = 'SUPPORT_ATTACHMENT_VIEWED', 'Support attachment viewed'
         # An OPEN conversation moved off a deactivated admin by the normal routing rule.
         SUPPORT_CONVERSATION_REASSIGNED = 'SUPPORT_CONVERSATION_REASSIGNED', 'Support conversation reassigned'
+        # Android app releases, managed by a SUPER_ADMIN in Django Admin.
+        APP_RELEASE_CREATED = 'APP_RELEASE_CREATED', 'App release created'
+        APP_RELEASE_UPDATED = 'APP_RELEASE_UPDATED', 'App release updated'
+        APP_RELEASE_PUBLISHED = 'APP_RELEASE_PUBLISHED', 'App release published'
+        APP_RELEASE_UNPUBLISHED = 'APP_RELEASE_UNPUBLISHED', 'App release unpublished'
 
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
