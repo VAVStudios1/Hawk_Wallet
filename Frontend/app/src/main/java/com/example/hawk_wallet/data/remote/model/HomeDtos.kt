@@ -41,5 +41,25 @@ data class HomeTransactionDto(
     val amount: String,
     val status: String,
     val created_at: String,
-    val reference: String
+    val reference: String,
+    /** Stable record id ("PAYIN-12"); only GET /api/home/transactions/ sends it. */
+    val id: String? = null
+)
+
+/**
+ * GET /api/home/transactions/ response data: one page, newest first. The
+ * backend resolves the period ([range], [start_date] / [end_date] as
+ * YYYY-MM-DD) and does all filtering, ordering and paging.
+ */
+data class TransactionHistoryData(
+    val transactions: List<HomeTransactionDto>,
+    val range: String,
+    val start_date: String,
+    val end_date: String,
+    /** The applied type filter: all / buy / sell. */
+    val type: String,
+    val page: Int,
+    val page_size: Int,
+    val total: Int,
+    val has_next: Boolean
 )

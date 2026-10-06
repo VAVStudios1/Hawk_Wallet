@@ -15,7 +15,9 @@ android {
         minSdk = 24
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0"
+        // MAJOR.MINOR.PATCH: sent to the backend as X-App-Version and
+        // compared with published releases. Bump versionCode with every release.
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

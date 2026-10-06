@@ -63,6 +63,15 @@ fun TransactionItem(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            transaction.reference?.let { reference ->
+                Text(
+                    text = "Ref $reference",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = transaction.dateTime,

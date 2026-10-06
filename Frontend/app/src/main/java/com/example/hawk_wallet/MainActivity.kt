@@ -5,11 +5,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.example.hawk_wallet.data.local.SessionManager
+import com.example.hawk_wallet.data.remote.AppCompatibility
 import com.example.hawk_wallet.data.remote.NetworkModule
 import com.example.hawk_wallet.data.repository.AdminDashboardRepository
 import com.example.hawk_wallet.data.repository.AdminManagementRepository
 import com.example.hawk_wallet.data.repository.AdminOrderRepository
 import com.example.hawk_wallet.data.repository.AdminUserRepository
+import com.example.hawk_wallet.data.repository.AppPackageInfo
+import com.example.hawk_wallet.data.repository.AppUpdateRepository
 import com.example.hawk_wallet.data.repository.AuthRepository
 import com.example.hawk_wallet.data.repository.BuyMethodRepository
 import com.example.hawk_wallet.data.repository.ContentResolverQrImageReader
@@ -22,6 +25,7 @@ import com.example.hawk_wallet.data.repository.SupportChatRepository
 import com.example.hawk_wallet.data.repository.TeamRepository
 import com.example.hawk_wallet.ui.navigation.HawkApp
 import com.example.hawk_wallet.ui.theme.Hawk_WalletTheme
+import java.io.File
 
 class MainActivity : ComponentActivity() {
 
@@ -30,6 +34,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // The installed versionName goes out as X-App-Version on every
+        // request, so it is set before any API client is used.
+        val appPackageInfo = AppPackageInfo(applicationContext)
+        AppCompatibility.setInstalledVersionName(appPackageInfo.installedVersionName)
 
         sessionManager = SessionManager(applicationContext)
         val sessionRefresher = NetworkModule.provideSessionRefresher(sessionManager)
@@ -57,6 +66,13 @@ class MainActivity : ComponentActivity() {
             SupportAttachmentFiles(applicationContext.contentResolver, applicationContext.cacheDir)
         )
 
+        val appUpdateRepository = AppUpdateRepository(
+            NetworkModule.provideAppUpdateApi(),
+            NetworkModule.provideApkDownloadClient(),
+            appPackageInfo,
+            File(applicationContext.filesDir, "app_updates")
+        )
+
         setContent {
             Hawk_WalletTheme {
                 HawkApp(
@@ -72,6 +88,7 @@ class MainActivity : ComponentActivity() {
                     teamRepository = teamRepository,
                     profileRepository = profileRepository,
                     supportChatRepository = supportChatRepository,
+                    appUpdateRepository = appUpdateRepository,
                     sessionManager = sessionManager,
                     sessionRefresher = sessionRefresher
                 )

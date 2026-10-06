@@ -30,5 +30,7 @@ data class TransactionUi(
     val dateTime: String,
     val amount: String,
     val isCredit: Boolean,
-    val status: TransactionStatus
+    val status: TransactionStatus,
+    /** Order reference, shown under the title when set (Transaction History; Home leaves it off). */
+    val reference: String? = null
 )

@@ -33,6 +33,10 @@ class RegisterViewModel(private val authRepository: AuthRepository) : ViewModel(
         _uiState.update { it.copy(confirmPassword = value, confirmPasswordError = null, generalError = null) }
     }
 
+    fun onReferralCodeChange(value: String) {
+        _uiState.update { it.copy(referralCode = value, referralCodeError = null, generalError = null) }
+    }
+
     fun register() {
         val state = _uiState.value
 
@@ -71,7 +75,7 @@ class RegisterViewModel(private val authRepository: AuthRepository) : ViewModel(
         viewModelScope.launch {
             when (
                 val result = authRepository.register(
-                    state.name, state.mobileNumber, state.password, state.confirmPassword
+                    state.name, state.mobileNumber, state.password, state.confirmPassword, state.referralCode
                 )
             ) {
                 is ApiResult.Success -> _uiState.update {
@@ -82,8 +86,10 @@ class RegisterViewModel(private val authRepository: AuthRepository) : ViewModel(
                     val mobileFieldError = result.fieldErrors["mobile_number"]?.firstOrNull()
                     val passwordFieldError = result.fieldErrors["password"]?.firstOrNull()
                     val confirmPasswordFieldError = result.fieldErrors["confirm_password"]?.firstOrNull()
+                    val referralCodeFieldError = result.fieldErrors["referral_code"]?.firstOrNull()
                     val hasFieldErrors = listOf(
-                        nameFieldError, mobileFieldError, passwordFieldError, confirmPasswordFieldError
+                        nameFieldError, mobileFieldError, passwordFieldError, confirmPasswordFieldError,
+                        referralCodeFieldError
                     ).any { it != null }
 
                     _uiState.update {
@@ -93,6 +99,7 @@ class RegisterViewModel(private val authRepository: AuthRepository) : ViewModel(
                             mobileError = mobileFieldError,
                             passwordError = passwordFieldError,
                             confirmPasswordError = confirmPasswordFieldError,
+                            referralCodeError = referralCodeFieldError,
                             generalError = if (hasFieldErrors) null else result.message
                         )
                     }

@@ -20,9 +20,12 @@ class AuthRepository(private val authApi: AuthApi) {
         name: String,
         mobileNumber: String,
         password: String,
-        confirmPassword: String
+        confirmPassword: String,
+        referralCode: String? = null
     ): ApiResult<RegisterData> = safeApiCall {
-        authApi.register(RegisterRequest(name, mobileNumber, password, confirmPassword))
+        // A blank code is not sent; the backend validates any code that is.
+        val code = referralCode?.trim()?.takeIf { it.isNotEmpty() }
+        authApi.register(RegisterRequest(name, mobileNumber, password, confirmPassword, code))
     }
 
     suspend fun verifyRegistrationOtp(mobileNumber: String, otp: String): ApiResult<Unit> =

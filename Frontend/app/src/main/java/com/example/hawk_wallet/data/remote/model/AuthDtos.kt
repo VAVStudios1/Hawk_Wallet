@@ -24,7 +24,9 @@ data class RegisterRequest(
     val name: String,
     val mobile_number: String,
     val password: String,
-    val confirm_password: String
+    val confirm_password: String,
+    // Optional invite code; null is left out of the JSON body entirely.
+    val referral_code: String? = null
 )
 
 data class RegisterData(

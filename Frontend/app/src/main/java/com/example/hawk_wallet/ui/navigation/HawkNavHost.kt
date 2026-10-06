@@ -88,9 +88,12 @@ import com.example.hawk_wallet.ui.screens.auth.otp.OtpVerificationScreen
 import com.example.hawk_wallet.ui.screens.auth.otp.OtpViewModel
 import com.example.hawk_wallet.ui.screens.auth.register.RegisterScreen
 import com.example.hawk_wallet.ui.screens.auth.register.RegisterViewModel
+import com.example.hawk_wallet.ui.screens.home.BalanceDetailScreen
 import com.example.hawk_wallet.ui.screens.home.HomeActions
 import com.example.hawk_wallet.ui.screens.home.HomeScreen
 import com.example.hawk_wallet.ui.screens.home.HomeViewModel
+import com.example.hawk_wallet.ui.screens.home.TransactionHistoryScreen
+import com.example.hawk_wallet.ui.screens.home.TransactionHistoryViewModel
 import com.example.hawk_wallet.ui.screens.orders.ChoosePayoutMethodScreen
 import com.example.hawk_wallet.ui.screens.orders.ClaimViewModel
 import com.example.hawk_wallet.ui.screens.orders.OfferDetailsScreen
@@ -129,6 +132,7 @@ import com.example.hawk_wallet.ui.screens.team.TeamMembersScreen
 import com.example.hawk_wallet.ui.screens.team.TeamMembersViewModel
 import com.example.hawk_wallet.ui.screens.team.TeamScreen
 import com.example.hawk_wallet.ui.screens.team.TeamViewModel
+import com.example.hawk_wallet.ui.screens.usdt.UsdtUnavailableScreen
 
 @Composable
 fun HawkNavHost(
@@ -388,9 +392,14 @@ fun HawkNavHost(
                 viewModel = viewModel,
                 supportUnreadCount = supportUnreadCount,
                 actions = HomeActions(
-                    // USDT and Task have no screen yet, so they stay inert.
+                    onBalanceDetailClick = { navController.navigate(HawkRoutes.BALANCE_DETAIL) { launchSingleTop = true } },
+                    onSeeAllTransactionsClick = {
+                        navController.navigate(HawkRoutes.TRANSACTION_HISTORY) { launchSingleTop = true }
+                    },
+                    // Task has no screen yet, so it stays inert.
                     onQuickActionClick = { action ->
                         when (action) {
+                            QuickAction.USDT -> navController.navigate(HawkRoutes.USDT) { launchSingleTop = true }
                             QuickAction.ORDER -> navController.navigate(HawkRoutes.ORDERS) { launchSingleTop = true }
                             QuickAction.TEAM -> openTeam()
                             else -> Unit
@@ -414,6 +423,27 @@ fun HawkNavHost(
                     }
                 )
             )
+        }
+
+        composable(HawkRoutes.BALANCE_DETAIL) { backStackEntry ->
+            // Scoped to Home's entry, so Detail shows the same /api/home/ response Home holds.
+            val homeEntry = remember(backStackEntry) { navController.getBackStackEntry(HawkRoutes.HOME) }
+            val viewModel: HomeViewModel = viewModel(
+                viewModelStoreOwner = homeEntry,
+                factory = viewModelFactory { initializer { HomeViewModel(homeRepository) } }
+            )
+            BalanceDetailScreen(viewModel = viewModel, onBackClick = { navController.popBackStack() })
+        }
+
+        composable(HawkRoutes.TRANSACTION_HISTORY) {
+            val viewModel: TransactionHistoryViewModel = viewModel(
+                factory = viewModelFactory { initializer { TransactionHistoryViewModel(homeRepository) } }
+            )
+            TransactionHistoryScreen(viewModel = viewModel, onBackClick = { navController.popBackStack() })
+        }
+
+        composable(HawkRoutes.USDT) {
+            UsdtUnavailableScreen(onBackClick = { navController.popBackStack() })
         }
 
         composable(HawkRoutes.WALLET) { backStackEntry ->

@@ -5,6 +5,7 @@ import com.example.hawk_wallet.data.remote.api.AdminDashboardApi
 import com.example.hawk_wallet.data.remote.api.AdminManagementApi
 import com.example.hawk_wallet.data.remote.api.AdminOrderApi
 import com.example.hawk_wallet.data.remote.api.AdminUserApi
+import com.example.hawk_wallet.data.remote.api.AppUpdateApi
 import com.example.hawk_wallet.data.remote.api.AuthApi
 import com.example.hawk_wallet.data.remote.api.BuyMethodApi
 import com.example.hawk_wallet.data.remote.api.HomeApi
@@ -26,7 +27,7 @@ object NetworkModule {
     // Local dev backend only - 10.0.2.2 is the Android emulator's alias for
     // the host machine's localhost. Point this at a real deployed URL once
     // one is configured; nothing here assumes AWS or any specific host.
-    private const val BASE_URL = "http://10.14.167.70:8000/"
+    private const val BASE_URL = "http://172.31.2.146:8000/"
 
 //    private const val BASE_URL = "https://1ee9-152-59-28-213.ngrok-free.app"
 
@@ -56,6 +57,27 @@ object NetworkModule {
                 buildRetrofit(buildClient()).create(TokenRefreshApi::class.java)
             ).also { sessionRefresher = it }
         }
+
+    @Volatile
+    private var anonymousRetrofit: Retrofit? = null
+
+    /**
+     * The update check runs on a client without the JWT interceptor or the
+     * refresh authenticator: it is public, and must work before login and
+     * when the session has expired.
+     */
+    fun provideAppUpdateApi(): AppUpdateApi =
+        (anonymousRetrofit ?: synchronized(this) {
+            anonymousRetrofit ?: buildRetrofit(buildClient()).also { anonymousRetrofit = it }
+        }).create(AppUpdateApi::class.java)
+
+    /**
+     * Downloads the update APK from the backend-provided apk_url. No JWT is
+     * ever attached (the URL's host is not trusted with it), and an
+     * https -> http redirect is refused rather than followed.
+     */
+    fun provideApkDownloadClient(): OkHttpClient =
+        buildClient { followSslRedirects(false) }
 
     fun provideAuthApi(sessionManager: SessionManager): AuthApi =
         provideRetrofit(sessionManager).create(AuthApi::class.java)
@@ -128,6 +150,8 @@ object NetworkModule {
         }
         return OkHttpClient.Builder()
             .apply(configure)
+            // Every client sends X-App-Version and reports 426 app_update_required.
+            .addInterceptor(AppCompatibility.interceptor)
             .addInterceptor(loggingInterceptor)
             .build()
     }

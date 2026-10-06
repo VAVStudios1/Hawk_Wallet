@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Verified update APKs handed to the Package Installer (AppUpdateRepository). Nothing else is shared. -->
+<paths>
+    <files-path
+        name="app_updates"
+        path="app_updates/" />
+</paths>

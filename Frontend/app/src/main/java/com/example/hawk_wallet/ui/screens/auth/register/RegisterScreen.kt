@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material3.Button
@@ -29,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -59,6 +61,7 @@ fun RegisterScreen(
         onMobileNumberChange = viewModel::onMobileNumberChange,
         onPasswordChange = viewModel::onPasswordChange,
         onConfirmPasswordChange = viewModel::onConfirmPasswordChange,
+        onReferralCodeChange = viewModel::onReferralCodeChange,
         onRegisterClick = viewModel::register,
         onNavigateToLogin = onNavigateToLogin
     )
@@ -71,6 +74,7 @@ private fun RegisterScreenContent(
     onMobileNumberChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onConfirmPasswordChange: (String) -> Unit,
+    onReferralCodeChange: (String) -> Unit,
     onRegisterClick: () -> Unit,
     onNavigateToLogin: () -> Unit
 ) {
@@ -140,7 +144,23 @@ private fun RegisterScreenContent(
                 label = "Confirm password",
                 isError = uiState.confirmPasswordError != null,
                 errorText = uiState.confirmPasswordError,
-                imeAction = ImeAction.Done
+                imeAction = ImeAction.Next
+            )
+            Spacer(modifier = Modifier.height(14.dp))
+            OutlinedTextField(
+                value = uiState.referralCode,
+                onValueChange = onReferralCodeChange,
+                label = { Text("Referral code (optional)") },
+                isError = uiState.referralCodeError != null,
+                supportingText = { uiState.referralCodeError?.let { Text(it) } },
+                leadingIcon = { Icon(Icons.Filled.CardGiftcard, contentDescription = null) },
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Characters,
+                    imeAction = ImeAction.Done
+                ),
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
             )
 
             uiState.generalError?.let {
@@ -187,6 +207,7 @@ private fun RegisterScreenPreview() {
             onMobileNumberChange = {},
             onPasswordChange = {},
             onConfirmPasswordChange = {},
+            onReferralCodeChange = {},
             onRegisterClick = {},
             onNavigateToLogin = {}
         )

@@ -14,6 +14,11 @@ object HawkRoutes {
     const val FORGOT_PASSWORD_OTP = "forgot_password_otp"
     const val RESET_PASSWORD = "reset_password"
     const val HOME = "home"
+    // Opened from Home: the balance breakdown (shares Home's data) and the USDT notice.
+    const val BALANCE_DETAIL = "balance_detail"
+    const val USDT = "usdt"
+    // Home -> Transactions -> See All: the member's paged transaction history.
+    const val TRANSACTION_HISTORY = "transaction_history"
     const val ADMIN_DASHBOARD = "admin_dashboard"
 
     // Wallet tab: the member's payout (payment) methods and the add flow.

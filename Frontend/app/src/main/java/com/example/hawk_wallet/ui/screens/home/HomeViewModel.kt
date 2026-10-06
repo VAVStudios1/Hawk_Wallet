@@ -67,12 +67,15 @@ private fun HomeData.toContent() = HomeContent(
     ),
     deposit = DisplayFormat.rupees(deposit_withdrawal.deposit),
     withdrawal = DisplayFormat.rupees(deposit_withdrawal.withdrawal),
-    recentTransactions = recent_transactions.mapIndexed { index, item -> item.toUi(index) }
+    // The API has no per-item id here; position + event data keeps list keys unique.
+    recentTransactions = recent_transactions.mapIndexed { index, item ->
+        item.toTransactionUi(id = "$index-${item.type}-${item.reference}-${item.created_at}")
+    }
 )
 
-private fun HomeTransactionDto.toUi(index: Int) = TransactionUi(
-    // The API has no per-item id; position + event data keeps list keys unique.
-    id = "$index-$type-$reference-$created_at",
+/** Shared by Home and Transaction History; formatting only, as above. */
+internal fun HomeTransactionDto.toTransactionUi(id: String, reference: String? = null) = TransactionUi(
+    id = id,
     type = when (type) {
         "ORDER_PAYMENT" -> TransactionType.ORDER_PAYMENT
         "PAYOUT" -> TransactionType.PAYOUT
@@ -88,5 +91,6 @@ private fun HomeTransactionDto.toUi(index: Int) = TransactionUi(
         "CANCELLED" -> TransactionStatus.CANCELLED
         "FAILED" -> TransactionStatus.FAILED
         else -> TransactionStatus.PENDING
-    }
+    },
+    reference = reference
 )
