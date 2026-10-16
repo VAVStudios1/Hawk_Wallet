@@ -34,6 +34,8 @@ from core.serializers import (
 )
 from core.services import (
     OTPCooldownError,
+    OTPDeliveryError,
+    OTPRequestLimitError,
     OTPServiceError,
     generate_and_send_otp,
     verify_otp,
@@ -44,11 +46,16 @@ User = get_user_model()
 
 
 def _otp_error_response(exc: OTPServiceError):
-    if isinstance(exc, OTPCooldownError):
+    if isinstance(exc, (OTPCooldownError, OTPRequestLimitError)):
+        errors = {'code': exc.code}
+        if exc.retry_after_seconds is not None:
+            errors['retry_after_seconds'] = exc.retry_after_seconds
         return error_response(
-            str(exc),
-            errors={'retry_after_seconds': exc.retry_after_seconds},
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            str(exc), errors=errors, status_code=status.HTTP_429_TOO_MANY_REQUESTS
+        )
+    if isinstance(exc, OTPDeliveryError):
+        return error_response(
+            str(exc), errors={'code': exc.code}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE
         )
     return error_response(str(exc), status_code=status.HTTP_400_BAD_REQUEST)
 
@@ -65,11 +72,22 @@ class RegisterView(APIView):
 
         with transaction.atomic():
             user = serializer.save()
+
+        # Sent after the account commits: if the SMS fails, the account stays
+        # unverified and the user recovers through resend-otp or login.
+        try:
             generate_and_send_otp(user, OTP.Purpose.REGISTRATION)
+        except OTPServiceError:
+            return success_response(
+                'Registration successful, but we could not send the OTP. '
+                'Please request a new one shortly.',
+                data={'mobile_number': user.mobile_number, 'otp_sent': False},
+                status_code=status.HTTP_201_CREATED,
+            )
 
         return success_response(
             'Registration successful. An OTP has been sent to verify your mobile number.',
-            data={'mobile_number': user.mobile_number},
+            data={'mobile_number': user.mobile_number, 'otp_sent': True},
             status_code=status.HTTP_201_CREATED,
         )
 
@@ -129,7 +147,7 @@ class ResendOTPView(APIView):
 
         try:
             generate_and_send_otp(user, purpose)
-        except OTPCooldownError as exc:
+        except OTPServiceError as exc:
             return _otp_error_response(exc)
 
         return success_response('A new OTP has been sent.')

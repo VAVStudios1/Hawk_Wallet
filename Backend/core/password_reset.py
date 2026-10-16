@@ -2,10 +2,10 @@
 Forgot password: mobile number -> OTP -> single-use reset token -> new password.
 
 1. request_password_reset: sends a PASSWORD_RESET OTP through the shared OTP
-   service (hashed, expiring, attempt-limited, resend cooldown, plus the
-   per-account caps in settings.OTP_REQUEST_LIMITS). The outcome is never
-   reported to the caller, so the endpoint cannot be used to learn which
-   mobile numbers have accounts.
+   service (hashed, expiring, attempt-limited, per-number send limits, plus
+   the per-account caps in settings.OTP_REQUEST_LIMITS). The outcome,
+   including a failed SMS, is never reported to the caller, so the endpoint
+   cannot be used to learn which mobile numbers have accounts.
 2. verify_password_reset_otp: consumes the OTP and returns a random reset
    token. Only its SHA-256 hash is stored (PasswordResetToken), tied to the
    user, the OTP and a fingerprint of the user's current password hash. It
@@ -72,13 +72,12 @@ def request_password_reset(*, mobile_number):
     user = _resettable_user(mobile_number)
     if user is None:
         return
-    with transaction.atomic():
-        # Serializes requests for one account so the caps cannot be raced.
-        locked = User.objects.select_for_update().get(pk=user.pk)
-        try:
-            generate_and_send_otp(locked, OTP.Purpose.PASSWORD_RESET)
-        except OTPServiceError:
-            pass
+    # Not in a transaction: the OTP service locks the account itself, and its
+    # send-attempt record must commit even when the SMS fails.
+    try:
+        generate_and_send_otp(user, OTP.Purpose.PASSWORD_RESET)
+    except OTPServiceError:
+        pass
 
 
 def verify_password_reset_otp(*, mobile_number, code):

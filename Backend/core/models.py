@@ -193,6 +193,42 @@ class OTP(models.Model):
         return f'{self.user.mobile_number} - {self.purpose}'
 
 
+class OTPSendAttempt(models.Model):
+    """
+    One row per OTP SMS send, whatever its outcome. The per-number cooldown
+    and rolling window (core/services.py) count these rows across every OTP
+    purpose, so failed and uncertain sends are rate-limited too. Never holds
+    the code.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        SENT = 'sent', 'Sent'
+        FAILED = 'failed', 'Failed'
+        # The provider may still deliver it (e.g. timed out after sending).
+        UNCERTAIN = 'uncertain', 'Uncertain'
+
+    user = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, related_name='otp_send_attempts'
+    )
+    mobile_number = models.CharField(max_length=10)
+    purpose = models.CharField(max_length=20, choices=OTP.Purpose.choices)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    failure_reason = models.CharField(max_length=32, blank=True)
+    provider_reference = models.CharField(max_length=64, blank=True)
+
+    created_at = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['mobile_number', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.purpose} - {self.status}'
+
+
 class PasswordResetToken(models.Model):
     """
     The short-lived, single-use credential a user receives after verifying a

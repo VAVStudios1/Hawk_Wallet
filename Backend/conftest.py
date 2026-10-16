@@ -16,6 +16,18 @@ _mobile_numbers = count(9000000000)
 _keys = count(1)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_sms(settings, monkeypatch):
+    # .env may select the live 2Factor provider; tests must never reach it.
+    settings.SMS_PROVIDER = 'console'
+    settings.TWOFACTOR_API_KEY = ''
+
+    def _network_disabled(request, timeout):
+        raise RuntimeError('Network access is disabled in tests.')
+
+    monkeypatch.setattr('core.sms._open', _network_disabled)
+
+
 def next_key():
     return f'key-{next(_keys)}'
 

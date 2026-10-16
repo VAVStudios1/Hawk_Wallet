@@ -188,9 +188,9 @@ def test_registration_otp_verification_then_login(db, sms):
     assert _login('9876543210').status_code == 200
 
 
-def test_resend_otp_still_works_for_registration(db, sms, settings):
-    settings.OTP_RESEND_COOLDOWN_SECONDS = 0
+def test_resend_otp_still_works_for_registration(db, sms, clock):
     _register()
+    clock.advance(seconds=150)
 
     response = _post(RESEND_OTP_URL, {'mobile_number': '9876543210', 'purpose': 'registration'})
 
@@ -331,10 +331,12 @@ def test_reset_request_for_ineligible_account_reveals_nothing(make_user, sms, ex
     assert sms == []
 
 
-def test_reset_request_cooldown_and_caps_are_silent(user, sms, settings):
-    settings.OTP_RESEND_COOLDOWN_SECONDS = 0
+def test_reset_request_cooldown_and_caps_are_silent(user, sms, clock):
+    # One request per cooldown stays inside the per-number SMS limits, so
+    # only the hourly password-reset cap (5) stops the sixth.
     for _ in range(5):
         assert _request_reset(user.mobile_number).data == GENERIC_REQUEST_REPLY
+        clock.advance(seconds=150)
 
     capped = _request_reset(user.mobile_number)
 
@@ -472,9 +474,9 @@ def test_expired_reset_token_is_refused(user, sms):
     assert user.check_password(PASSWORD)
 
 
-def test_newer_reset_token_voids_the_older_one(user, sms, settings):
-    settings.OTP_RESEND_COOLDOWN_SECONDS = 0
+def test_newer_reset_token_voids_the_older_one(user, sms, clock):
     first = _reset_token_for(user, sms)
+    clock.advance(seconds=150)
     second = _reset_token_for(user, sms)
 
     assert _confirm_reset(first).status_code == 400

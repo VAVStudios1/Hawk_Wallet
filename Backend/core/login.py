@@ -23,7 +23,7 @@ from django.utils import timezone
 from audit.models import AuditEvent
 from audit.services import record_audit_event
 from core.models import OTP, User
-from core.services import OTPCooldownError, OTPRequestLimitError, generate_and_send_otp
+from core.services import OTPServiceError, generate_and_send_otp
 from core.tokens import issue_token_pair
 
 
@@ -164,7 +164,7 @@ def _audit_failure(user, ip_address, *, reason, locked=False):
 def _send_registration_otp(user):
     try:
         generate_and_send_otp(user, OTP.Purpose.REGISTRATION)
-    except (OTPCooldownError, OTPRequestLimitError):
+    except OTPServiceError:
         return False
     return True
 

@@ -270,15 +270,27 @@ SIMPLE_JWT = {
 CORS_ALLOWED_ORIGINS = _env_list('CORS_ALLOWED_ORIGINS')
 
 
-# OTP configuration - development mode uses a console SMS provider.
-# See core/sms.py for the provider abstraction that a real SMS vendor
-# (Twilio, MSG91, etc.) will later plug into.
+# OTP rules (core/services.py). Fixed here rather than read from .env, so a
+# deployment cannot weaken them by accident.
+OTP_LENGTH = 6
+OTP_EXPIRY_MINUTES = 5
+OTP_MAX_ATTEMPTS = 5
+# OTP SMS limits per mobile number, across every OTP purpose and endpoint.
+# Failed and uncertain sends count too. The cooldown runs from the last send,
+# independently of the OTP expiry.
+OTP_SEND_COOLDOWN_SECONDS = 150
+OTP_SEND_WINDOW_SECONDS = 5 * 60
+OTP_SEND_WINDOW_MAX = 2
 
+# OTP SMS delivery (core/sms.py): 'console' prints codes to the terminal and
+# works only with DEBUG on; '2factor' sends through 2Factor.in.
 SMS_PROVIDER = os.environ.get('SMS_PROVIDER', 'console')
-OTP_LENGTH = int(os.environ.get('OTP_LENGTH', '6'))
-OTP_EXPIRY_MINUTES = int(os.environ.get('OTP_EXPIRY_MINUTES', '5'))
-OTP_MAX_ATTEMPTS = int(os.environ.get('OTP_MAX_ATTEMPTS', '5'))
-OTP_RESEND_COOLDOWN_SECONDS = int(os.environ.get('OTP_RESEND_COOLDOWN_SECONDS', '30'))
+# 2Factor.in. The API key is read only from the environment / .env.
+TWOFACTOR_API_KEY = os.environ.get('TWOFACTOR_API_KEY', '')
+TWOFACTOR_BASE_URL = os.environ.get('TWOFACTOR_BASE_URL', 'https://2factor.in/API/V1')
+# Approved OTP template name in the 2Factor dashboard; empty = account default.
+TWOFACTOR_OTP_TEMPLATE = os.environ.get('TWOFACTOR_OTP_TEMPLATE', '')
+TWOFACTOR_TIMEOUT_SECONDS = float(os.environ.get('TWOFACTOR_TIMEOUT_SECONDS', '10'))
 
 # Extra per-account caps on OTP requests, by OTP purpose: (window in
 # seconds, max OTPs created in that window). Together with OTP_MAX_ATTEMPTS
